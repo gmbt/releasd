@@ -18,6 +18,11 @@
   const unb64 = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, '')), (c) => c.charCodeAt(0)));
   const nonEmpty = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v));
 
+  function migrateSeen(m) {
+    for (const [k, v] of Object.entries(m)) if (typeof v === 'number') m[k] = { t: v, s: 1 };
+    return m;
+  }
+
   function detectRepo() {
     const m = location.hostname.match(/^([^.]+)\.github\.io$/i);
     return { owner: m ? m[1] : '', repo: m ? (location.pathname.split('/').filter(Boolean)[0] || '') : '', token: '' };
@@ -26,7 +31,7 @@
   const state = {
     cfg: null, cfgSha: null,
     rinse: [], bc: null,
-    seen: load(LS.seen, {}),
+    seen: migrateSeen(load(LS.seen, {})),
     ui: Object.assign({ hideSeen: false, showUpcoming: false, tab: 'rinse', bcTab: 'released', rinseSort: 'added' }, load(LS.ui, {})),
     settings: Object.assign(detectRepo(), nonEmpty(load(LS.settings, {}))),
   };
@@ -148,7 +153,7 @@
   }
 
   function rinseItem(it) {
-    const seen = !!state.seen[it.id];
+    const seen = isSeen(it.id);
     const badges = [
       it.rebroadcast && '<span class="badge rb">rebroadcast</span>',
       it.backfilled && '<span class="badge bf">backfilled</span>',
@@ -201,7 +206,7 @@
   }
 
   function bcItem(r) {
-    const seen = !!state.seen[r.id];
+    const seen = isSeen(r.id);
     const via = (r.via || []).map((v) => `<a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.name)}</a>`).join(', ');
     const label = r.label && !(r.via || []).some((v) => v.name === r.label) ? esc(r.label) : '';
     const pre = isPre(r);
@@ -246,18 +251,85 @@
 
   /* ---------- seen ---------- */
   function updateCounts() {
-    $('#rinseCount').textContent = visibleRinse().filter((i) => !state.seen[i.id]).length || '';
-    const unseen = (list) => list.filter((i) => !state.seen[i.id]).length || '';
+    const unseen = (list) => list.filter((i) => !isSeen(i.id)).length || '';
+    $('#rinseCount').textContent = unseen(visibleRinse());
     $('#bcReleasedCount').textContent = unseen(visibleBc('released'));
     $('#bcPreCount').textContent = unseen(visibleBc('preorders'));
     $('#bcCount').textContent = unseen(allBc());
   }
-  function setSeen(id, on) { if (on) state.seen[id] = Date.now(); else delete state.seen[id]; }
+  const isSeen = (id) => state.seen[id]?.s === 1;
+  function setSeen(id, on) { state.seen[id] = { t: Date.now(), s: on ? 1 : 0 }; }
   function markAllSeen(which) {
     (which === 'rinse' ? visibleRinse() : visibleBc()).forEach((i) => setSeen(i.id, true));
-    save(LS.seen, state.seen);
+    save(LS.seen, state.seen); scheduleSeenPush();
     which === 'rinse' ? renderRinse() : renderBc();
   }
+
+  /* seen-state sync: seen.json on a separate `state` branch of the repo (no rebuild, no noise on main).
+     Per-id last-write-wins merge, so several devices can mark things independently. */
+  const SEEN_PATH = 'seen.json', SEEN_BRANCH = 'state', SEEN_KEEP_MS = 180 * 864e5;
+  const seenPath = () => `/repos/${state.settings.owner}/${state.settings.repo}/contents/${SEEN_PATH}`;
+  let seenSha = null, seenTimer = null, seenPushing = false, seenDirty = false;
+
+  function mergeSeen(items) {
+    let changed = false;
+    for (const [id, rec] of Object.entries(items || {})) {
+      const cur = state.seen[id];
+      if (!cur || (rec.t || 0) > (cur.t || 0)) { state.seen[id] = rec; changed = true; }
+    }
+    return changed;
+  }
+  function pruneSeen() {
+    const cutoff = Date.now() - SEEN_KEEP_MS;
+    for (const [id, rec] of Object.entries(state.seen)) if ((rec.t || 0) < cutoff) delete state.seen[id];
+  }
+  async function pullSeen() {
+    if (!ghReady()) return false;
+    try {
+      const r = await gh(`${seenPath()}?ref=${SEEN_BRANCH}`);
+      seenSha = r.sha;
+      const changed = mergeSeen(JSON.parse(unb64(r.content)).items);
+      if (changed) save(LS.seen, state.seen);
+      return changed;
+    } catch (e) {
+      if (/GitHub 404/.test(e.message)) { seenSha = null; return false; }  // branch/file not there yet
+      toast('seen sync (read): ' + e.message, 6000);
+      return false;
+    }
+  }
+  async function ensureStateBranch() {
+    const s = state.settings;
+    try { await gh(`/repos/${s.owner}/${s.repo}/git/ref/heads/${SEEN_BRANCH}`); return; } catch { /* create it */ }
+    const main = await gh(`/repos/${s.owner}/${s.repo}/git/ref/heads/main`);
+    await gh(`/repos/${s.owner}/${s.repo}/git/refs`, { method: 'POST', body: JSON.stringify({ ref: `refs/heads/${SEEN_BRANCH}`, sha: main.object.sha }) });
+  }
+  function scheduleSeenPush() {
+    if (!ghReady()) return;
+    seenDirty = true; clearTimeout(seenTimer); seenTimer = setTimeout(pushSeen, 1500);
+  }
+  async function pushSeen(retry = true) {
+    if (!ghReady() || seenPushing) return;
+    seenPushing = true; seenDirty = false;
+    try {
+      pruneSeen();
+      const body = { message: 'seen', branch: SEEN_BRANCH, content: b64(JSON.stringify({ v: 1, items: state.seen })), sha: seenSha || undefined };
+      const r = await gh(seenPath(), { method: 'PUT', body: JSON.stringify(body) });
+      seenSha = r.content.sha;
+    } catch (e) {
+      if (retry && /GitHub (409|422|404)/.test(e.message)) {
+        // stale sha (another device wrote) or branch missing: sync up and try once more
+        try { await ensureStateBranch(); await pullSeen(); seenPushing = false; return pushSeen(false); } catch (e2) { toast('seen sync: ' + e2.message, 6000); }
+      } else toast('seen sync: ' + e.message, 6000);
+    } finally {
+      seenPushing = false;
+      if (seenDirty) scheduleSeenPush();
+    }
+  }
+  // other devices may have marked things while this tab was in the background
+  document.addEventListener('visibilitychange', async () => {
+    if (document.hidden || !state.cfg) return;
+    if (await pullSeen()) { renderRinse(); renderBc(); }
+  });
 
   /* ---------- source editors ---------- */
   const chip = (label, kind, val, title = 'remove') => `<span class="chip">${esc(label)}<button type="button" data-rm="${kind}" data-val="${esc(val)}" title="${title}">×</button></span>`;
@@ -350,7 +422,7 @@
   document.addEventListener('change', (ev) => {
     const t = ev.target;
     if (t.matches('.seenbox input')) {
-      const li = t.closest('.item'); setSeen(li.dataset.id, t.checked); save(LS.seen, state.seen);
+      const li = t.closest('.item'); setSeen(li.dataset.id, t.checked); save(LS.seen, state.seen); scheduleSeenPush();
       li.classList.toggle('seen', t.checked); updateCounts();
     } else if (t.id === 'hideSeen') { state.ui.hideSeen = t.checked; save(LS.ui, state.ui); document.body.classList.toggle('hide-seen', t.checked); }
     else if (t.id === 'showUpcoming') { state.ui.showUpcoming = t.checked; save(LS.ui, state.ui); renderRinse(); }
@@ -398,10 +470,14 @@
     $('#rinseSort').value = state.ui.rinseSort || 'added';
     renderTabs();
     $$('.editor').forEach((e) => { if (!e.hidden) renderEditor(e.id === 'rinseEditor' ? 'rinse' : 'bandcamp'); });
+    const hadLocal = Object.keys(state.seen).length > 0;
     await Promise.allSettled([
+      pullSeen(),
       fetchRinse().then(renderRinse, (e) => { $('#rinseStatus').textContent = 'Rinse API error: ' + e.message; }),
       fetchBandcamp().then(renderBc, (e) => { $('#bcStatus').textContent = 'No Bandcamp data yet — run build.py or wait for the Action. ' + e.message; }),
     ]);
+    renderRinse(); renderBc();
+    if (hadLocal) scheduleSeenPush();  // upload marks made on this device before/without sync
   }
   init();
 })();

@@ -61,8 +61,9 @@
 <dialog id="settings">
   <form method="dialog" class="settings-form">
     <h2>GitHub sync</h2>
-    <p class="hint">Show/label edits are committed to <code>config.json</code> in your repo, which triggers a rebuild.
-      Needs a fine-grained token with <b>Contents: read &amp; write</b> on that one repo. Stored in this browser only.</p>
+    <p class="hint">With a token, show/label edits are committed to <code>config.json</code> (triggers a rebuild) and your
+      seen marks sync across devices via <code>seen.json</code> on a <code>state</code> branch. Needs a fine-grained token with
+      <b>Contents: read &amp; write</b> on that one repo. Paste it on every device; it is stored in the browser only.</p>
     <label>Owner <input name="owner" autocomplete="off" spellcheck="false"></label>
     <label>Repo <input name="repo" autocomplete="off" spellcheck="false"></label>
     <label>Token <input name="token" type="password" autocomplete="off"></label>

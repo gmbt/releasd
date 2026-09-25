@@ -17,7 +17,9 @@ No backend. Static page on GitHub Pages. A Python script in GitHub Actions refre
 4. Optional, to edit shows/labels from the page: create a **fine-grained PAT**
    (GitHub → Settings → Developer settings → Fine-grained tokens): repository access = only this repo,
    permission **Contents: Read and write**. Paste it into the page's *settings*. It is stored only in your browser.
-   Every edit becomes a commit to `config.json`, which triggers a rebuild (~2 min). Without a token, edits stay in the browser.
+   Every edit becomes a commit to `config.json`, which triggers a rebuild (~5 min). Without a token, edits stay in the browser.
+5. The same token syncs your **seen** checkmarks across devices: they are written to `seen.json` on a `state` branch
+   (created automatically; never triggers a build). Per-item last-write-wins, so phone and laptop can be used interchangeably.
 
 ## config.json
 
