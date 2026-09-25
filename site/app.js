@@ -27,7 +27,7 @@
     cfg: null, cfgSha: null,
     rinse: [], bc: null,
     seen: load(LS.seen, {}),
-    ui: Object.assign({ hideSeen: false, showUpcoming: false, tab: 'rinse', bcTab: 'released' }, load(LS.ui, {})),
+    ui: Object.assign({ hideSeen: false, showUpcoming: false, tab: 'rinse', bcTab: 'released', rinseSort: 'added' }, load(LS.ui, {})),
     settings: Object.assign(detectRepo(), nonEmpty(load(LS.settings, {}))),
   };
 
@@ -104,10 +104,19 @@
     const shows = state.cfg.rinse?.shows || [];
     if (!shows.length) { state.rinse = []; return; }
     const since = new Date(Date.now() - (state.cfg.days_back || 30) * 864e5).toISOString().slice(0, 10);
-    const d = await rinseQuery(`{ episodeEntries(limit: 500, orderBy: "episodeDate DESC", episodeDate: ${JSON.stringify('>= ' + since)}, relatedToEntries: [{slug: ${JSON.stringify(shows)}}]) {
-      title slug ... on episode_Entry { displayTitle extract episodeDate episodeTime episodeLength fileUrl isRebroadcast channel { title } parentShow { slug title } } } }`);
-    state.rinse = (d.episodeEntries || []).map(normRinse).sort((a, b) => b.when - a.when);
+    const rel = `relatedToEntries: [{slug: ${JSON.stringify(shows)}}]`;
+    const fields = `{ title slug dateUpdated ... on episode_Entry { displayTitle extract episodeDate episodeTime episodeLength fileUrl isRebroadcast channel { title }
+      featuredImage { filename } parentShow { slug title ... on show_Entry { featuredImage { filename } defaultEpisodeImage { filename } } } } }`;
+    // a: aired inside the window; b: aired before it but audio attached (entry updated) inside it -> late backfills
+    const d = await rinseQuery(`{
+      a: episodeEntries(limit: 500, orderBy: "episodeDate DESC", episodeDate: ${JSON.stringify('>= ' + since)}, ${rel}) ${fields}
+      b: episodeEntries(limit: 100, orderBy: "dateUpdated DESC", dateUpdated: ${JSON.stringify('>= ' + since)}, episodeDate: ${JSON.stringify('< ' + since)}, fileUrl: ":notempty:", ${rel}) ${fields}
+    }`);
+    const seen = new Set();
+    state.rinse = [...(d.a || []), ...(d.b || [])].filter((e) => !seen.has(e.slug) && seen.add(e.slug)).map(normRinse);
   }
+
+  const rinseArt = (f) => (f ? `https://image.rinse.fm/_/${encodeURIComponent(f)}?w=112&h=112` : null);
 
   function normRinse(e) {
     const show = e.parentShow?.[0] || {};
@@ -115,8 +124,13 @@
     const hm = (e.episodeTime || '').slice(11, 16);      // episodeTime carries only the time of day
     const [h, m] = hm ? hm.split(':').map(Number) : [0, 0];
     const when = new Date(day.getTime() + (h * 60 + m) * 60000);
+    const updated = new Date(e.dateUpdated);
+    const available = e.fileUrl ? updated : when;          // audio arrives with the entry update
+    const backfilled = !!e.fileUrl && updated - when > 2 * 864e5;
+    const img = show.featuredImage?.[0]?.filename || e.featuredImage?.[0]?.filename || show.defaultEpisodeImage?.[0]?.filename;
     return {
-      id: 'r:' + e.slug,
+      id: 'r:' + e.slug + (e.fileUrl ? '' : ':pending'),  // "seen" while pending must not stick once audio lands
+      available, backfilled, addedStr: fmtDay(updated, 'Europe/London'), art: rinseArt(img),
       showSlug: show.slug || e.slug.replace(/-\d{2}-\d{2}-\d{4}-\d{4}(-\d+)?$/, ''),
       showTitle: show.title || e.title.split(' - ')[0],
       sub: e.displayTitle || '',
@@ -128,20 +142,25 @@
     };
   }
 
-  const visibleRinse = () => state.rinse.filter((it) => state.ui.showUpcoming || !it.upcoming);
+  function visibleRinse() {
+    const key = state.ui.rinseSort === 'aired' ? 'when' : 'available';
+    return state.rinse.filter((it) => state.ui.showUpcoming || !it.upcoming).sort((a, b) => b[key] - a[key]);
+  }
 
   function rinseItem(it) {
     const seen = !!state.seen[it.id];
     const badges = [
       it.rebroadcast && '<span class="badge rb">rebroadcast</span>',
+      it.backfilled && '<span class="badge bf">backfilled</span>',
       it.upcoming && '<span class="badge up">upcoming</span>',
       !it.file && !it.upcoming && '<span class="badge">not archived yet</span>',
     ].filter(Boolean).join('');
-    const meta = [it.dateStr, it.time, it.channel, it.length ? `${it.length} min` : '',
+    const meta = [it.backfilled ? `aired ${it.dateStr} ${it.time} · added ${it.addedStr}` : `${it.dateStr} · ${it.time}`, it.channel, it.length ? `${it.length} min` : '',
       `<a href="${esc(it.url)}" target="_blank" rel="noopener">rinse.fm</a>`,
       it.file ? `<a href="${esc(it.file)}" target="_blank" rel="noopener">mp3</a>` : ''].filter(Boolean).join(' · ');
-    return `<li class="item${seen ? ' seen' : ''}" data-id="${esc(it.id)}">
+    return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(it.id)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
+      ${it.art ? `<img class="art" src="${esc(it.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
       <div class="body">
         <div class="line1"><a class="show" href="https://rinse.fm/shows/${esc(it.showSlug)}" target="_blank" rel="noopener">${esc(it.showTitle)}</a>${it.sub ? ` <span class="sub">${esc(it.sub)}</span>` : ''}${badges}</div>
         <div class="meta">${meta}</div>
@@ -335,6 +354,7 @@
       li.classList.toggle('seen', t.checked); updateCounts();
     } else if (t.id === 'hideSeen') { state.ui.hideSeen = t.checked; save(LS.ui, state.ui); document.body.classList.toggle('hide-seen', t.checked); }
     else if (t.id === 'showUpcoming') { state.ui.showUpcoming = t.checked; save(LS.ui, state.ui); renderRinse(); }
+    else if (t.id === 'rinseSort') { state.ui.rinseSort = t.value; save(LS.ui, state.ui); renderRinse(); }
   });
   document.addEventListener('click', (ev) => {
     const t = ev.target.closest('button'); if (!t) return;
@@ -375,6 +395,7 @@
     document.body.classList.toggle('hide-seen', !!state.ui.hideSeen);
     $('#hideSeen').checked = !!state.ui.hideSeen;
     $('#showUpcoming').checked = !!state.ui.showUpcoming;
+    $('#rinseSort').value = state.ui.rinseSort || 'added';
     renderTabs();
     $$('.editor').forEach((e) => { if (!e.hidden) renderEditor(e.id === 'rinseEditor' ? 'rinse' : 'bandcamp'); });
     await Promise.allSettled([

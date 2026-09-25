@@ -64,6 +64,8 @@ body.hide-seen .item.seen { display: none; }
   font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; vertical-align: middle; }
 .badge.rb { background: var(--rb); color: #000; }
 .badge.up { background: var(--up); color: #000; }
+.badge.bf { background: var(--accent); color: #000; }
+select { font: inherit; font-size: 12.5px; padding: 2px 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
 audio { display: block; width: 100%; max-width: 560px; height: 32px; margin-top: 6px; }
 .player:not(:empty) { margin-top: 6px; }
 .player iframe { border: 0; width: 100%; max-width: 560px; height: 120px; display: block; }
