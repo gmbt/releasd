@@ -127,7 +127,7 @@
     const updated = new Date(e.dateUpdated);
     const available = e.fileUrl ? updated : when;          // audio arrives with the entry update
     const backfilled = !!e.fileUrl && updated - when > 2 * 864e5;
-    const img = show.featuredImage?.[0]?.filename || e.featuredImage?.[0]?.filename || show.defaultEpisodeImage?.[0]?.filename;
+    const img = e.featuredImage?.[0]?.filename || show.featuredImage?.[0]?.filename || show.defaultEpisodeImage?.[0]?.filename;  // episode art first
     return {
       id: 'r:' + e.slug + (e.fileUrl ? '' : ':pending'),  // "seen" while pending must not stick once audio lands
       available, backfilled, addedStr: fmtDay(updated, 'Europe/London'), art: rinseArt(img),
