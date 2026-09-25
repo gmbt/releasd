@@ -1,0 +1,11 @@
+{
+  "days_back": 30,
+  "rinse": {
+    "shows": ["hodge", "josi-devil", "portway"]
+  },
+  "bandcamp": {
+    "fan": "gmbt",
+    "labels": [],
+    "exclude": []
+  }
+}

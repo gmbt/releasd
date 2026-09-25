@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>releasd</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>releasd</h1>
+  <nav class="tabs" aria-label="Sections">
+    <button type="button" class="tab active" data-tab="rinse">Rinse <span id="rinseCount" class="count"></span></button>
+    <button type="button" class="tab" data-tab="bandcamp">Bandcamp <span id="bcCount" class="count"></span></button>
+  </nav>
+  <div class="tools">
+    <label class="chk"><input type="checkbox" id="hideSeen"> hide seen</label>
+    <label class="chk"><input type="checkbox" id="showUpcoming"> upcoming</label>
+    <button type="button" id="openSettings" class="btn ghost" title="GitHub sync settings">settings</button>
+  </div>
+</header>
+
+<main class="cols">
+  <section class="panel active" id="rinse">
+    <div class="panel-head">
+      <h2>Rinse FM</h2>
+      <div class="panel-tools">
+        <button type="button" class="btn ghost" data-edit="rinse">edit shows</button>
+        <button type="button" class="btn ghost" data-seen="rinse">mark all seen</button>
+      </div>
+    </div>
+    <div class="editor" id="rinseEditor" hidden></div>
+    <p class="status" id="rinseStatus">loading…</p>
+    <ol class="items" id="rinseItems"></ol>
+  </section>
+
+  <section class="panel" id="bandcamp">
+    <div class="panel-head">
+      <h2>Bandcamp</h2>
+      <div class="panel-tools">
+        <button type="button" class="btn ghost" data-edit="bandcamp">edit labels</button>
+        <button type="button" class="btn ghost" data-seen="bandcamp">mark all seen</button>
+      </div>
+    </div>
+    <div class="editor" id="bcEditor" hidden></div>
+    <p class="status" id="bcStatus">loading…</p>
+    <ol class="items" id="bcItems"></ol>
+  </section>
+</main>
+
+<dialog id="settings">
+  <form method="dialog" class="settings-form">
+    <h2>GitHub sync</h2>
+    <p class="hint">Show/label edits are committed to <code>config.json</code> in your repo, which triggers a rebuild.
+      Needs a fine-grained token with <b>Contents: read &amp; write</b> on that one repo. Stored in this browser only.</p>
+    <label>Owner <input name="owner" autocomplete="off" spellcheck="false"></label>
+    <label>Repo <input name="repo" autocomplete="off" spellcheck="false"></label>
+    <label>Token <input name="token" type="password" autocomplete="off"></label>
+    <div class="row">
+      <button value="cancel" class="btn ghost">cancel</button>
+      <button value="save" class="btn">save</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
