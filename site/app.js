@@ -168,7 +168,7 @@
   }
 
   // pre-order = release date still ahead, or Bandcamp says so (data can be up to 3 h stale)
-  const isPre = (r) => new Date(r.release_date).getTime() > Date.now() || !!r.is_preorder;
+  const isPre = (r) => new Date(r.release_date).getTime() > Date.now() || (!!r.is_preorder && (r.streamable ?? 0) < (r.tracks ?? 0));
 
   function allBc() {
     if (!state.bc) return [];
