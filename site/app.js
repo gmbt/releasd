@@ -27,7 +27,7 @@
     cfg: null, cfgSha: null,
     rinse: [], bc: null,
     seen: load(LS.seen, {}),
-    ui: Object.assign({ hideSeen: false, showUpcoming: false, tab: 'rinse' }, load(LS.ui, {})),
+    ui: Object.assign({ hideSeen: false, showUpcoming: false, tab: 'rinse', bcTab: 'released' }, load(LS.ui, {})),
     settings: Object.assign(detectRepo(), nonEmpty(load(LS.settings, {}))),
   };
 
@@ -104,7 +104,7 @@
     const shows = state.cfg.rinse?.shows || [];
     if (!shows.length) { state.rinse = []; return; }
     const since = new Date(Date.now() - (state.cfg.days_back || 30) * 864e5).toISOString().slice(0, 10);
-    const d = await rinseQuery(`{ episodeEntries(limit: 300, orderBy: "episodeDate DESC", episodeDate: ${JSON.stringify('>= ' + since)}, relatedToEntries: [{slug: ${JSON.stringify(shows)}}]) {
+    const d = await rinseQuery(`{ episodeEntries(limit: 500, orderBy: "episodeDate DESC", episodeDate: ${JSON.stringify('>= ' + since)}, relatedToEntries: [{slug: ${JSON.stringify(shows)}}]) {
       title slug ... on episode_Entry { displayTitle extract episodeDate episodeTime episodeLength fileUrl isRebroadcast channel { title } parentShow { slug title } } } }`);
     state.rinse = (d.episodeEntries || []).map(normRinse).sort((a, b) => b.when - a.when);
   }
@@ -167,36 +167,50 @@
     state.bc = await r.json();
   }
 
-  function visibleBc() {
+  // pre-order = release date still ahead, or Bandcamp says so (data can be up to 3 h stale)
+  const isPre = (r) => new Date(r.release_date).getTime() > Date.now() || !!r.is_preorder;
+
+  function allBc() {
     if (!state.bc) return [];
     const ex = new Set((state.cfg.bandcamp?.exclude || []).map(String));
     return state.bc.releases.filter((r) => !(r.via || []).every((v) => ex.has(v.subdomain || '') || ex.has(v.url)));
+  }
+  function visibleBc(tab = state.ui.bcTab) {
+    const items = allBc().filter((r) => isPre(r) === (tab === 'preorders'));
+    // released: newest first (build order); pre-orders: soonest out first
+    return tab === 'preorders' ? items.sort((a, b) => new Date(a.release_date) - new Date(b.release_date)) : items;
   }
 
   function bcItem(r) {
     const seen = !!state.seen[r.id];
     const via = (r.via || []).map((v) => `<a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.name)}</a>`).join(', ');
     const label = r.label && !(r.via || []).some((v) => v.name === r.label) ? esc(r.label) : '';
-    const meta = [fmtDay(new Date(r.release_date), 'UTC'), via, label, r.tracks ? `${r.tracks} tr` : '', r.duration ? fmtDur(r.duration) : '',
-      '<button type="button" class="btn play">play</button>'].filter(Boolean).join(' · ');
+    const pre = isPre(r);
+    const date = fmtDay(new Date(r.release_date), 'UTC');
+    const tracks = pre
+      ? (r.tracks ? `${r.streamable ?? '?'} of ${r.tracks} tracks available` : '')
+      : [r.tracks ? `${r.tracks} tr` : '', r.duration ? fmtDur(r.duration) : ''].filter(Boolean).join(' · ');
+    const meta = [pre ? `out ${date}` : date, via, label, tracks,
+      (!pre || r.streamable) ? '<button type="button" class="btn play">play</button>' : ''].filter(Boolean).join(' · ');
     return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(r.id)}" data-item="${esc(r.item_type)}:${esc(r.item_id)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${r.art ? `<img class="art" src="${esc(r.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
       <div class="body">
-        <div class="line1"><span class="artist">${esc(r.artist)}</span> — <a href="${esc(r.url || r.via?.[0]?.url || '#')}" target="_blank" rel="noopener">${esc(r.title)}</a>${r.preorder ? '<span class="badge up">pre-order</span>' : ''}${r.item_type === 'track' ? '<span class="badge">single</span>' : ''}</div>
+        <div class="line1"><span class="artist">${esc(r.artist)}</span> — <a href="${esc(r.url || r.via?.[0]?.url || '#')}" target="_blank" rel="noopener">${esc(r.title)}</a>${pre ? '<span class="badge up">pre-order</span>' : ''}${r.item_type === 'track' ? '<span class="badge">single</span>' : ''}</div>
         <div class="meta">${meta}</div>
         <div class="player"></div>
       </div></li>`;
   }
 
   function renderBc() {
+    $$('.subtab').forEach((b) => b.classList.toggle('active', b.dataset.bctab === state.ui.bcTab));
     const items = visibleBc();
     $('#bcItems').innerHTML = items.map(bcItem).join('');
     if (state.bc) {
       const age = Math.round((Date.now() - new Date(state.bc.generated_at)) / 36e5);
       const errs = state.bc.errors?.length ? ` · ${state.bc.errors.length} fetch errors` : '';
       const st = $('#bcStatus');
-      st.textContent = `${items.length} releases · ${state.bc.bands.length} artists/labels · built ${age < 1 ? '<1' : age} h ago${errs}`;
+      st.textContent = `${items.length} ${state.ui.bcTab === 'preorders' ? 'pre-orders' : 'releases'} · ${state.bc.bands.length} artists/labels · last ${state.bc.days_back} days · built ${age < 1 ? '<1' : age} h ago${errs}`;
       st.title = (state.bc.errors || []).join('\n');
     }
     updateCounts();
@@ -214,7 +228,10 @@
   /* ---------- seen ---------- */
   function updateCounts() {
     $('#rinseCount').textContent = visibleRinse().filter((i) => !state.seen[i.id]).length || '';
-    $('#bcCount').textContent = visibleBc().filter((i) => !state.seen[i.id]).length || '';
+    const unseen = (list) => list.filter((i) => !state.seen[i.id]).length || '';
+    $('#bcReleasedCount').textContent = unseen(visibleBc('released'));
+    $('#bcPreCount').textContent = unseen(visibleBc('preorders'));
+    $('#bcCount').textContent = unseen(allBc());
   }
   function setSeen(id, on) { if (on) state.seen[id] = Date.now(); else delete state.seen[id]; }
   function markAllSeen(which) {
@@ -322,6 +339,7 @@
   document.addEventListener('click', (ev) => {
     const t = ev.target.closest('button'); if (!t) return;
     if (t.matches('.tab')) { state.ui.tab = t.dataset.tab; save(LS.ui, state.ui); renderTabs(); }
+    else if (t.matches('.subtab')) { state.ui.bcTab = t.dataset.bctab; save(LS.ui, state.ui); renderBc(); }
     else if (t.matches('.play')) togglePlayer(t.closest('.item'));
     else if (t.dataset.seen) markAllSeen(t.dataset.seen);
     else if (t.dataset.edit) toggleEditor(t.dataset.edit);

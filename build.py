@@ -153,7 +153,9 @@ def enrich(rel: dict) -> dict:
     rel["url"] = t.get("bandcamp_url")
     rel["label"] = t.get("label")
     rel["tracks"] = len(tracks)
+    rel["streamable"] = sum(1 for x in tracks if x.get("is_streamable"))
     rel["duration"] = round(sum(x.get("duration") or 0 for x in tracks))
+    rel["is_preorder"] = bool(t.get("is_preorder"))
     return rel
 
 
@@ -203,14 +205,16 @@ def main() -> int:
         except json.JSONDecodeError:
             cache = {}
     fetched = 0
+    detail_keys = ("url", "label", "tracks", "streamable", "duration", "is_preorder")
     for r in releases.values():
         c = cache.get(r["id"])
-        if c and c.get("url"):
+        # pre-orders change (more tracks unlock, flag flips on release day) -> always refetch those
+        if c and c.get("url") and "streamable" in c and not r["preorder"] and not c.get("is_preorder"):
             r.update(c)
             continue
         try:
             enrich(r)
-            cache[r["id"]] = {k: r[k] for k in ("url", "label", "tracks", "duration")}
+            cache[r["id"]] = {k: r[k] for k in detail_keys}
             fetched += 1
         except Exception as e:  # noqa: BLE001
             errors.append(f"tralbum {r['title']}: {e}")
