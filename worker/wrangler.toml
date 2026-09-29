@@ -13,4 +13,4 @@ ALLOWED_ORIGINS = "https://gmbt.github.io,http://localhost:8000"
 
 [[kv_namespaces]]
 binding = "STATE"
-id = "REPLACE_WITH_ID_FROM__wrangler_kv_namespace_create_STATE"
+id = "059ef67e0a1347098365d93402420729"

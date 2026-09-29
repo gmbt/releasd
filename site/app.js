@@ -5,7 +5,7 @@
   'use strict';
 
   const RINSE_API = 'https://admin.rinse.fm/api';
-  const API_URL = '__API_URL__';  // Cloudflare Worker from worker/, filled in at deploy
+  const API_URL = 'https://releasd-api.gmbt.workers.dev';  // Cloudflare Worker from worker/
   const LS = { seen: 'releasd.seen', settings: 'releasd.settings', cfg: 'releasd.cfg', ui: 'releasd.ui' };
   const DEFAULT_CFG = { days_back: 30, rinse: { shows: [] }, bandcamp: { fan: '', labels: [], exclude: [] } };
 

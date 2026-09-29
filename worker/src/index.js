@@ -57,35 +57,47 @@ const b64encode = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)
 const b64decode = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, '')), (c) => c.charCodeAt(0)));
 
 /* ---------- seen marks ---------- */
+function mergeItems(into, from) {
+  let changed = false;
+  for (const [id, rec] of Object.entries(from || {})) {
+    if (!rec || typeof rec.t !== 'number' || id.length > 200) continue;
+    const cur = into[id];
+    if (!cur || rec.t > cur.t) { into[id] = { t: rec.t, s: rec.s ? 1 : 0 }; changed = true; }
+  }
+  return changed;
+}
+
 async function getSeen(env) {
-  const doc = await env.STATE.get(SEEN_KEY, 'json');
-  return doc || (await seedSeenFromGitHub(env)) || { v: 1, items: {} };
+  const doc = (await env.STATE.get(SEEN_KEY, 'json')) || { v: 1, items: {} };
+  if (!doc.seeded) {  // one-time migration from the earlier seen.json-on-a-branch approach, whenever the token is available
+    const legacy = await legacySeen(env);
+    if (legacy) {
+      mergeItems(doc.items, legacy.items);
+      doc.seeded = true; doc.updated = Date.now();
+      await env.STATE.put(SEEN_KEY, JSON.stringify(doc));
+    }
+  }
+  return doc;
 }
 
 async function putSeen(env, body) {
   const doc = await getSeen(env);
-  const items = doc.items || {};
-  let changed = false;
-  for (const [id, rec] of Object.entries((body && body.items) || {})) {
-    if (!rec || typeof rec.t !== 'number' || id.length > 200) continue;
-    const cur = items[id];
-    if (!cur || rec.t > cur.t) { items[id] = { t: rec.t, s: rec.s ? 1 : 0 }; changed = true; }
-  }
+  let changed = mergeItems(doc.items, body && body.items);
   const cutoff = Date.now() - KEEP_MS;
-  for (const [id, rec] of Object.entries(items)) if (rec.t < cutoff) { delete items[id]; changed = true; }
-  const out = { v: 1, items, updated: changed ? Date.now() : doc.updated || null };
-  if (changed) await env.STATE.put(SEEN_KEY, JSON.stringify(out));
-  return out;
+  for (const [id, rec] of Object.entries(doc.items)) if (rec.t < cutoff) { delete doc.items[id]; changed = true; }
+  if (changed) { doc.updated = Date.now(); await env.STATE.put(SEEN_KEY, JSON.stringify(doc)); }
+  return doc;
 }
 
-// one-time migration from the earlier seen.json-on-a-branch approach
-async function seedSeenFromGitHub(env) {
+// returns {items} to merge, {} when there is nothing to migrate, null when it cannot be known yet (no token / GitHub down)
+async function legacySeen(env) {
+  if (!env.GH_TOKEN) return null;
   try {
     const r = await gh(env, '/contents/seen.json?ref=state', { headers: { Accept: 'application/vnd.github.raw+json' } });
-    const doc = await r.json();
-    if (doc && doc.items) { await env.STATE.put(SEEN_KEY, JSON.stringify({ v: 1, items: doc.items, updated: Date.now() })); return doc; }
-  } catch { /* nothing to migrate */ }
-  return null;
+    return await r.json();
+  } catch (e) {
+    return /GitHub 404/.test(e.message) ? {} : null;
+  }
 }
 
 /* ---------- config.json via GitHub ---------- */
