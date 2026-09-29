@@ -91,3 +91,4 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .settings-form input { display: block; width: 100%; margin-top: 3px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; }
 .settings-form .row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
 code { font-size: 12px; background: var(--line); padding: 1px 4px; border-radius: 3px; }
+code.wrap { display: block; margin: 4px 0 6px; padding: 6px 8px; overflow-wrap: anywhere; user-select: all; }

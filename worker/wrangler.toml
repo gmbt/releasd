@@ -1,0 +1,16 @@
+# releasd private backend: seen-marks store + GitHub proxy for config edits.
+# Secrets (set with `npx wrangler secret put <NAME>`):
+#   API_KEY   - long random string; the page sends it as Bearer token (from the #k= URL fragment)
+#   GH_TOKEN  - fine-grained GitHub PAT, Contents: read & write on GH_OWNER/GH_REPO only
+name = "releasd-api"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+GH_OWNER = "gmbt"
+GH_REPO = "releasd"
+ALLOWED_ORIGINS = "https://gmbt.github.io,http://localhost:8000"
+
+[[kv_namespaces]]
+binding = "STATE"
+id = "REPLACE_WITH_ID_FROM__wrangler_kv_namespace_create_STATE"

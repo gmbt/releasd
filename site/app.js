@@ -5,7 +5,7 @@
   'use strict';
 
   const RINSE_API = 'https://admin.rinse.fm/api';
-  const GH_API = 'https://api.github.com';
+  const API_URL = '__API_URL__';  // Cloudflare Worker from worker/, filled in at deploy
   const LS = { seen: 'releasd.seen', settings: 'releasd.settings', cfg: 'releasd.cfg', ui: 'releasd.ui' };
   const DEFAULT_CFG = { days_back: 30, rinse: { shows: [] }, bandcamp: { fan: '', labels: [], exclude: [] } };
 
@@ -14,8 +14,6 @@
   const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } };
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const b64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
-  const unb64 = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, '')), (c) => c.charCodeAt(0)));
   const nonEmpty = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v));
 
   function migrateSeen(m) {
@@ -23,17 +21,18 @@
     return m;
   }
 
-  function detectRepo() {
-    const m = location.hostname.match(/^([^.]+)\.github\.io$/i);
-    return { owner: m ? m[1] : '', repo: m ? (location.pathname.split('/').filter(Boolean)[0] || '') : '', token: '' };
+  // the personal sync link carries the backend key: https://…/releasd/#k=<key>
+  function keyFromUrl() {
+    const m = location.hash.match(/[#&]k=([A-Za-z0-9_-]{16,})/);
+    return m ? m[1] : '';
   }
 
   const state = {
-    cfg: null, cfgSha: null,
+    cfg: null,
     rinse: [], bc: null,
     seen: migrateSeen(load(LS.seen, {})),
     ui: Object.assign({ hideSeen: false, showUpcoming: false, tab: 'rinse', bcTab: 'released', rinseSort: 'added' }, load(LS.ui, {})),
-    settings: Object.assign(detectRepo(), nonEmpty(load(LS.settings, {}))),
+    settings: Object.assign({ api: API_URL, key: '' }, nonEmpty(load(LS.settings, {})), nonEmpty({ key: keyFromUrl() })),
   };
 
   /* ---------- ui helpers ---------- */
@@ -47,26 +46,29 @@
   const fmtDur = (s) => (s >= 3600 ? `${Math.floor(s / 3600)}h ${String(Math.round((s % 3600) / 60)).padStart(2, '0')}m` : `${Math.round(s / 60)} min`);
   const fmtDay = (d, tz) => d.toLocaleDateString('en-GB', { timeZone: tz, day: '2-digit', month: 'short' });
 
-  /* ---------- github sync ---------- */
-  const ghReady = () => !!(state.settings.token && state.settings.owner && state.settings.repo);
-  const cfgPath = () => `/repos/${state.settings.owner}/${state.settings.repo}/contents/config.json`;
-
-  async function gh(path, opts = {}) {
-    const r = await fetch(GH_API + path, { ...opts, headers: { Authorization: `Bearer ${state.settings.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(opts.headers || {}) } });
-    if (!r.ok) throw new Error(`GitHub ${r.status}: ${(await r.text()).slice(0, 160)}`);
+  /* ---------- backend: Cloudflare Worker (worker/) ---------- */
+  const apiReady = () => !!(state.settings.api && state.settings.key);
+  async function api(path, opts = {}) {
+    const r = await fetch(state.settings.api.replace(/\/$/, '') + path, {
+      ...opts,
+      headers: { Authorization: `Bearer ${state.settings.key}`, 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    });
+    if (!r.ok) {
+      let msg = ''; try { msg = (await r.json()).error || ''; } catch { /* no body */ }
+      throw new Error(`API ${r.status}${msg ? ': ' + msg : ''}`);
+    }
     return r.json();
   }
+  const syncErr = (e, what) => toast(/API 401/.test(e.message) ? 'Sync key rejected — check settings.' : `${what}: ${e.message}`, 6000);
 
   async function loadConfig() {
     const local = load(LS.cfg, null);
-    if (ghReady()) {
+    if (apiReady()) {
       try {
-        const r = await gh(cfgPath());
-        state.cfgSha = r.sha;
-        const cfg = JSON.parse(unb64(r.content));
-        if (!local?._localEdits) save(LS.cfg, cfg);
-        return cfg;
-      } catch (e) { console.warn('config via GitHub failed', e); toast(e.message, 6000); }
+        const { config } = await api('/config');
+        if (!local?._localEdits) save(LS.cfg, config);
+        return config;
+      } catch (e) { console.warn('config via API failed', e); syncErr(e, 'config'); }
     }
     if (local?._localEdits) return local;
     try {
@@ -78,15 +80,13 @@
 
   async function commitConfig(msg) {
     const cfg = { ...state.cfg }; delete cfg._localEdits;
-    if (!ghReady()) {
+    if (!apiReady()) {
       state.cfg._localEdits = true; save(LS.cfg, state.cfg);
-      toast('Saved in this browser only. Add a GitHub token in settings to sync.', 5000);
+      toast('Saved in this browser only. Open your personal sync link to sync (see settings).', 5000);
       return false;
     }
     try {
-      if (!state.cfgSha) { try { state.cfgSha = (await gh(cfgPath())).sha; } catch { /* file does not exist yet */ } }
-      const r = await gh(cfgPath(), { method: 'PUT', body: JSON.stringify({ message: msg, content: b64(JSON.stringify(cfg, null, 2) + '\n'), sha: state.cfgSha || undefined }) });
-      state.cfgSha = r.content.sha;
+      await api('/config', { method: 'PUT', body: JSON.stringify({ config: cfg, message: msg }) });
       delete state.cfg._localEdits; save(LS.cfg, state.cfg);
       toast('Committed: ' + msg);
       return true;
@@ -262,14 +262,11 @@
   function markAllSeen(which) {
     (which === 'rinse' ? visibleRinse() : visibleBc()).forEach((i) => setSeen(i.id, true));
     save(LS.seen, state.seen); scheduleSeenPush();
-    which === 'rinse' ? renderRinse() : renderBc();
+    applySeenToDom();
   }
 
-  /* seen-state sync: seen.json on a separate `state` branch of the repo (no rebuild, no noise on main).
-     Per-id last-write-wins merge, so several devices can mark things independently. */
-  const SEEN_PATH = 'seen.json', SEEN_BRANCH = 'state', SEEN_KEEP_MS = 180 * 864e5;
-  const seenPath = () => `/repos/${state.settings.owner}/${state.settings.repo}/contents/${SEEN_PATH}`;
-  let seenSha = null, seenTimer = null, seenPushing = false, seenDirty = false;
+  /* seen-state sync through the Worker. The server merges per item (last-write-wins), so devices never clobber each other. */
+  let seenTimer = null, seenPushing = false, seenDirty = false;
 
   function mergeSeen(items) {
     let changed = false;
@@ -279,47 +276,35 @@
     }
     return changed;
   }
-  function pruneSeen() {
-    const cutoff = Date.now() - SEEN_KEEP_MS;
-    for (const [id, rec] of Object.entries(state.seen)) if ((rec.t || 0) < cutoff) delete state.seen[id];
+  // update checkboxes in place: re-rendering would stop a playing <audio>
+  function applySeenToDom() {
+    $$('.item').forEach((li) => {
+      const on = isSeen(li.dataset.id); li.classList.toggle('seen', on);
+      const cb = $('.seenbox input', li); if (cb) cb.checked = on;
+    });
+    updateCounts();
   }
   async function pullSeen() {
-    if (!ghReady()) return false;
+    if (!apiReady()) return false;
     try {
-      const r = await gh(`${seenPath()}?ref=${SEEN_BRANCH}`);
-      seenSha = r.sha;
-      const changed = mergeSeen(JSON.parse(unb64(r.content)).items);
+      const changed = mergeSeen((await api('/seen')).items);
       if (changed) save(LS.seen, state.seen);
       return changed;
-    } catch (e) {
-      if (/GitHub 404/.test(e.message)) { seenSha = null; return false; }  // branch/file not there yet
-      toast('seen sync (read): ' + e.message, 6000);
-      return false;
-    }
-  }
-  async function ensureStateBranch() {
-    const s = state.settings;
-    try { await gh(`/repos/${s.owner}/${s.repo}/git/ref/heads/${SEEN_BRANCH}`); return; } catch { /* create it */ }
-    const main = await gh(`/repos/${s.owner}/${s.repo}/git/ref/heads/main`);
-    await gh(`/repos/${s.owner}/${s.repo}/git/refs`, { method: 'POST', body: JSON.stringify({ ref: `refs/heads/${SEEN_BRANCH}`, sha: main.object.sha }) });
+    } catch (e) { syncErr(e, 'seen sync'); return false; }
   }
   function scheduleSeenPush() {
-    if (!ghReady()) return;
+    if (!apiReady()) return;
     seenDirty = true; clearTimeout(seenTimer); seenTimer = setTimeout(pushSeen, 1500);
   }
-  async function pushSeen(retry = true) {
-    if (!ghReady() || seenPushing) return;
+  async function pushSeen() {
+    if (!apiReady() || seenPushing) return;
     seenPushing = true; seenDirty = false;
     try {
-      pruneSeen();
-      const body = { message: 'seen', branch: SEEN_BRANCH, content: b64(JSON.stringify({ v: 1, items: state.seen })), sha: seenSha || undefined };
-      const r = await gh(seenPath(), { method: 'PUT', body: JSON.stringify(body) });
-      seenSha = r.content.sha;
+      const merged = await api('/seen', { method: 'PUT', body: JSON.stringify({ items: state.seen }) });
+      if (mergeSeen(merged.items)) { save(LS.seen, state.seen); applySeenToDom(); }
     } catch (e) {
-      if (retry && /GitHub (409|422|404)/.test(e.message)) {
-        // stale sha (another device wrote) or branch missing: sync up and try once more
-        try { await ensureStateBranch(); await pullSeen(); seenPushing = false; return pushSeen(false); } catch (e2) { toast('seen sync: ' + e2.message, 6000); }
-      } else toast('seen sync: ' + e.message, 6000);
+      syncErr(e, 'seen sync');
+      if (!/API 401/.test(e.message)) seenTimer = setTimeout(() => { seenDirty = true; pushSeen(); }, 15000);  // offline? retry
     } finally {
       seenPushing = false;
       if (seenDirty) scheduleSeenPush();
@@ -328,12 +313,12 @@
   // other devices may have marked things while this tab was in the background
   document.addEventListener('visibilitychange', async () => {
     if (document.hidden || !state.cfg) return;
-    if (await pullSeen()) { renderRinse(); renderBc(); }
+    if (await pullSeen()) applySeenToDom();
   });
 
   /* ---------- source editors ---------- */
   const chip = (label, kind, val, title = 'remove') => `<span class="chip">${esc(label)}<button type="button" data-rm="${kind}" data-val="${esc(val)}" title="${title}">×</button></span>`;
-  const syncHint = () => ghReady() ? '' : '<p class="hint warn">Not synced to GitHub — edits stay in this browser. <button type="button" class="link" data-settings>Set token</button></p>';
+  const syncHint = () => apiReady() ? '' : '<p class="hint warn">Not synced — edits stay in this browser. <button type="button" class="link" data-settings>Open settings</button></p>';
 
   function renderEditor(which) {
     const c = state.cfg;
@@ -404,18 +389,23 @@
   }
 
   /* ---------- settings ---------- */
+  const syncLink = () => (state.settings.key ? `${location.origin}${location.pathname}#k=${state.settings.key}` : '');
   function openSettings() {
     const dlg = $('#settings'); const f = $('form', dlg);
-    f.owner.value = state.settings.owner || ''; f.repo.value = state.settings.repo || ''; f.token.value = state.settings.token || '';
+    f.api.value = state.settings.api || ''; f.key.value = state.settings.key || '';
+    $('#syncLink', dlg).textContent = syncLink() || 'no key yet';
     dlg.returnValue = ''; dlg.showModal();
   }
   $('#settings').addEventListener('close', async (ev) => {
     const dlg = ev.target; if (dlg.returnValue !== 'save') return;
     const f = $('form', dlg);
-    state.settings = { owner: f.owner.value.trim(), repo: f.repo.value.trim(), token: f.token.value.trim() };
+    state.settings = { api: f.api.value.trim() || API_URL, key: f.key.value.trim() };
     save(LS.settings, state.settings);
-    state.cfgSha = null;
     await init();
+  });
+  document.addEventListener('click', (ev) => {
+    if (ev.target.id !== 'copyLink' || !syncLink()) return;
+    navigator.clipboard?.writeText(syncLink()).then(() => toast('Sync link copied'), () => toast('Copy failed — select the link manually'));
   });
 
   /* ---------- events ---------- */
@@ -457,10 +447,11 @@
 
   /* ---------- init ---------- */
   async function init() {
+    if (keyFromUrl()) save(LS.settings, state.settings);  // arrived via the personal sync link: remember the key
     const local = load(LS.cfg, null);
     state.cfg = await loadConfig();
-    if (ghReady() && local?._localEdits) {
-      if (confirm('You have show/label edits saved only in this browser. Push them to GitHub now?')) {
+    if (apiReady() && local?._localEdits) {
+      if (confirm('You have show/label edits saved only in this browser. Sync them now?')) {
         state.cfg = local; await commitConfig('sync local edits');
       } else { delete local._localEdits; save(LS.cfg, state.cfg); }
     }

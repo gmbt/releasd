@@ -14,12 +14,27 @@ No backend. Static page on GitHub Pages. A Python script in GitHub Actions refre
    `gh api -X POST repos/OWNER/releasd/pages -f build_type=workflow`
    (or Settings → Pages → Source → GitHub Actions).
 3. Run the `build` workflow (it also runs on every push and every 3 h). Page: `https://OWNER.github.io/releasd/`.
-4. Optional, to edit shows/labels from the page: create a **fine-grained PAT**
-   (GitHub → Settings → Developer settings → Fine-grained tokens): repository access = only this repo,
-   permission **Contents: Read and write**. Paste it into the page's *settings*. It is stored only in your browser.
-   Every edit becomes a commit to `config.json`, which triggers a rebuild (~5 min). Without a token, edits stay in the browser.
-5. The same token syncs your **seen** checkmarks across devices: they are written to `seen.json` on a `state` branch
-   (created automatically; never triggers a build). Per-item last-write-wins, so phone and laptop can be used interchangeably.
+4. **Sync backend** (optional, but needed for editing from the page and for seen marks across devices):
+   a tiny Cloudflare Worker in `worker/`, free tier.
+
+   ```sh
+   cd worker
+   npx wrangler login                                  # once, opens the browser
+   npx wrangler kv namespace create STATE              # paste the returned id into wrangler.toml
+   npx wrangler secret put API_KEY                     # long random string, e.g. `openssl rand -hex 24`
+   npx wrangler secret put GH_TOKEN                    # fine-grained PAT: only this repo, Contents: read & write
+   npx wrangler deploy                                 # prints https://releasd-api.<you>.workers.dev
+   ```
+
+   Put the Worker URL into `API_URL` at the top of `site/app.js`, push. Then open the page once per device via your
+   personal link `https://OWNER.github.io/releasd/#k=<API_KEY>`; the key is remembered in that browser (settings shows
+   the link with a copy button). The GitHub token lives only in the Worker, never in a browser.
+
+   - `GET/PUT /seen` — seen marks in Workers KV, merged per item (last-write-wins), pruned after 180 days.
+   - `GET/PUT /config` — reads/commits `config.json` in the repo (a commit triggers the rebuild).
+   - CORS is limited to `ALLOWED_ORIGINS` in `wrangler.toml`.
+
+   Without the backend the page still works read-only: edits and seen marks stay in the browser.
 
 ## config.json
 

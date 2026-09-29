@@ -60,13 +60,15 @@
 
 <dialog id="settings">
   <form method="dialog" class="settings-form">
-    <h2>GitHub sync</h2>
-    <p class="hint">With a token, show/label edits are committed to <code>config.json</code> (triggers a rebuild) and your
-      seen marks sync across devices via <code>seen.json</code> on a <code>state</code> branch. Needs a fine-grained token with
-      <b>Contents: read &amp; write</b> on that one repo. Paste it on every device; it is stored in the browser only.</p>
-    <label>Owner <input name="owner" autocomplete="off" spellcheck="false"></label>
-    <label>Repo <input name="repo" autocomplete="off" spellcheck="false"></label>
-    <label>Token <input name="token" type="password" autocomplete="off"></label>
+    <h2>Sync</h2>
+    <p class="hint">Seen marks and show/label edits sync through your private backend. On a new device, open your
+      personal link once; the key is then remembered in that browser.</p>
+    <label>Your personal link <code id="syncLink" class="wrap">—</code>
+      <button type="button" id="copyLink" class="btn ghost">copy</button></label>
+    <label>Key <input name="key" autocomplete="off" spellcheck="false" placeholder="paste key if you have no link"></label>
+    <details><summary class="hint">advanced</summary>
+      <label>API URL <input name="api" autocomplete="off" spellcheck="false"></label>
+    </details>
     <div class="row">
       <button value="cancel" class="btn ghost">cancel</button>
       <button value="save" class="btn">save</button>
