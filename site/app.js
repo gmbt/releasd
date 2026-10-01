@@ -444,7 +444,7 @@
       if (!audio._src) { audio._src = bpmCtx.createMediaElementSource(audio); audio._src.connect(bpmCtx.destination); }  // once per element
       const analyzer = await bpmLib.createRealtimeBpmAnalyzer(bpmCtx, { continuousAnalysis: true, stabilizationTime: 20000 });
       const filter = bpmLib.getBiquadFilter(bpmCtx);
-      audio._src.connect(filter); filter.connect(analyzer); analyzer.connect(bpmCtx.destination);  // the worklet outputs silence
+      audio._src.connect(filter); filter.connect(analyzer.node); analyzer.connect(bpmCtx.destination);  // analyzer wraps the worklet node; it outputs silence
       badge.textContent = '… bpm'; badge.hidden = false;
       analyzer.on('bpm', (d) => { const c = d && d.bpm && d.bpm[0]; if (c) badge.textContent = `${Math.round(c.tempo)} bpm`; });
       analyzer.on('bpmStable', (d) => { const c = d && d.bpm && d.bpm[0]; if (c) badge.textContent = `${Math.round(c.tempo)} bpm ✓`; });
