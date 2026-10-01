@@ -13,6 +13,7 @@ export default {
     const cors = corsHeaders(req.headers.get('Origin') || '', env);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
     if (url.pathname === '/health') return json({ ok: true }, 200, cors);
+    if (url.pathname === '/audio' && req.method === 'GET') return audioRelay(req, url, cors);
     if (!authorized(req, env)) return json({ error: 'unauthorized' }, 401, cors);
     try {
       const route = `${req.method} ${url.pathname}`;
@@ -32,7 +33,7 @@ function corsHeaders(origin, env) {
   const allowed = (env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
   const h = {
     'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin',
     'Cache-Control': 'no-store',
@@ -55,6 +56,29 @@ function timingSafeEqual(a, b) {
 }
 const b64encode = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 const b64decode = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, '')), (c) => c.charCodeAt(0)));
+
+/* ---------- audio relay ----------
+   The browser can only run Web Audio analysis (live BPM) on media it may read cross-origin, and replay.rinse.fm
+   sends no CORS headers. This relays the mp3 with CORS + Range support. Unauthenticated (an <audio> element cannot
+   send headers) but limited to that host and to requests coming from an allowed page origin. */
+const AUDIO_HOSTS = new Set(['replay.rinse.fm']);
+async function audioRelay(req, url, cors) {
+  if (!cors['Access-Control-Allow-Origin']) return json({ error: 'forbidden origin' }, 403, cors);
+  let target;
+  try { target = new URL(url.searchParams.get('u') || ''); } catch { return json({ error: 'bad url' }, 400, cors); }
+  if (target.protocol !== 'https:' || !AUDIO_HOSTS.has(target.hostname)) return json({ error: 'host not allowed' }, 403, cors);
+  const headers = { 'User-Agent': 'releasd-worker' };
+  const range = req.headers.get('Range'); if (range) headers.Range = range;
+  const up = await fetch(target.toString(), { headers, cf: { cacheEverything: false } });
+  const out = new Headers(cors);
+  for (const h of ['Content-Type', 'Content-Length', 'Content-Range', 'Accept-Ranges', 'Last-Modified', 'ETag']) {
+    const v = up.headers.get(h); if (v) out.set(h, v);
+  }
+  out.set('Accept-Ranges', 'bytes');
+  out.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+  out.set('Cache-Control', 'public, max-age=3600');
+  return new Response(up.body, { status: up.status, headers: out });
+}
 
 /* ---------- seen marks ---------- */
 function mergeItems(into, from) {

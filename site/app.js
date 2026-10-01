@@ -31,7 +31,7 @@
     cfg: null,
     rinse: [], bc: null,
     seen: migrateSeen(load(LS.seen, {})),
-    ui: Object.assign({ hideSeen: false, showUpcoming: false, tab: 'rinse', bcTab: 'released', rinseSort: 'added' }, load(LS.ui, {})),
+    ui: Object.assign({ hideSeen: false, showUpcoming: false, tab: 'rinse', bcTab: 'released', rinseSort: 'added', bpm: false }, load(LS.ui, {})),
     settings: Object.assign({ api: API_URL, key: '' }, nonEmpty(load(LS.settings, {})), nonEmpty({ key: keyFromUrl() })),
   };
 
@@ -162,7 +162,9 @@
     ].filter(Boolean).join('');
     const meta = [it.backfilled ? `aired ${it.dateStr} ${it.time} · added ${it.addedStr}` : `${it.dateStr} · ${it.time}`, it.channel, it.length ? `${it.length} min` : '',
       `<a href="${esc(it.url)}" target="_blank" rel="noopener">rinse.fm</a>`,
-      it.file ? `<a href="${esc(it.file)}" target="_blank" rel="noopener">mp3</a>` : ''].filter(Boolean).join(' · ');
+      it.file ? `<a href="${esc(it.file)}" target="_blank" rel="noopener">mp3</a>` : '',
+      `<button type="button" class="btn ghost mini" data-copy="${esc(it.url)}" title="copy link to this episode">copy link</button>`,
+      '<span class="bpm badge" hidden></span>'].filter(Boolean).join(' · ');
     return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(it.id)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${it.art ? `<img class="art" src="${esc(it.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
@@ -170,7 +172,7 @@
         <div class="line1"><a class="show" href="https://rinse.fm/shows/${esc(it.showSlug)}" target="_blank" rel="noopener">${esc(it.showTitle)}</a>${it.sub ? ` <span class="sub">${esc(it.sub)}</span>` : ''}${badges}</div>
         <div class="meta">${meta}</div>
         ${it.extract ? `<div class="extract">${esc(it.extract)}</div>` : ''}
-        ${it.file ? `<audio controls preload="none" src="${esc(it.file)}"></audio>` : ''}
+        ${it.file ? `<audio controls preload="none"${bpmOn() ? ` crossorigin="anonymous" src="${esc(relayUrl(it.file))}"` : ` src="${esc(it.file)}"`}></audio>` : ''}
       </div></li>`;
   }
 
@@ -215,8 +217,9 @@
       ? (r.tracks ? `${r.streamable ?? '?'} of ${r.tracks} tracks available` : '')
       : [r.tracks ? `${r.tracks} tr` : '', r.duration ? fmtDur(r.duration) : ''].filter(Boolean).join(' · ');
     const meta = [pre ? `out ${date}` : date, via, label, tracks,
-      (!pre || r.streamable) ? '<button type="button" class="btn play">play</button>' : ''].filter(Boolean).join(' · ');
-    return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(r.id)}" data-item="${esc(r.item_type)}:${esc(r.item_id)}">
+      `<button type="button" class="btn ghost mini" data-copy="${esc(r.url || '')}" title="copy link to this release">copy link</button>`,
+      (!pre || r.streamable) ? '<button type="button" class="btn play" title="play">▶</button>' : ''].filter(Boolean).join(' · ');
+    return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(r.id)}" data-item="${esc(r.item_type)}:${esc(r.item_id)}" data-tracks="${r.tracks || 0}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${r.art ? `<img class="art" src="${esc(r.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
       <div class="body">
@@ -242,11 +245,18 @@
 
   function togglePlayer(li) {
     const box = $('.player', li);
-    if (box.firstChild) { box.innerHTML = ''; return; }
+    const wasOpen = !!box.firstChild;
     $$('.player').forEach((p) => { p.innerHTML = ''; });
+    $$('.btn.play').forEach((b) => { b.textContent = '▶'; });
+    if (wasOpen) return;
     $$('audio').forEach((a) => a.pause());
     const [type, id] = li.dataset.item.split(':');
-    box.innerHTML = `<iframe src="https://bandcamp.com/EmbeddedPlayer/${esc(type)}=${esc(id)}/size=large/bgcol=161618/linkcol=9bd0ff/tracklist=false/artwork=small/transparent=true/" loading="lazy" title="Bandcamp player"></iframe>`;
+    const tracks = Number(li.dataset.tracks) || 0;
+    // Bandcamp's large layout: 119px info row + 33px per track + padding; the list scrolls beyond ~7 tracks
+    const list = type === 'album' && tracks > 1;
+    const height = list ? Math.min(165 + 33 * tracks, 420) : 120;
+    box.innerHTML = `<iframe src="https://bandcamp.com/EmbeddedPlayer/${esc(type)}=${esc(id)}/size=large/bgcol=161618/linkcol=9bd0ff/tracklist=${list}/artwork=small/transparent=true/" style="height:${height}px" loading="lazy" title="Bandcamp player"></iframe>`;
+    $('.btn.play', li).textContent = '✕';
   }
 
   /* ---------- seen ---------- */
@@ -408,6 +418,48 @@
     navigator.clipboard?.writeText(syncLink()).then(() => toast('Sync link copied'), () => toast('Copy failed — select the link manually'));
   });
 
+  function copyText(text) {
+    if (!text) return toast('nothing to copy');
+    const ok = () => toast('Link copied');
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(ok, () => toast('Copy failed: ' + text, 6000));
+    else window.prompt('Copy link', text);
+  }
+
+  /* ---------- live BPM (Rinse only; Bandcamp plays inside Bandcamp's iframe) ----------
+     Web Audio can only analyse media the page may read cross-origin, so with BPM on the mp3 is streamed through
+     the Worker's /audio relay (adds CORS headers). Detection library: realtime-bpm-analyzer (range 90-180). */
+  const BPM_LIB = 'https://cdn.jsdelivr.net/npm/realtime-bpm-analyzer@5.0.15/dist/index.esm.js';
+  const bpmOn = () => !!state.ui.bpm;
+  const relayUrl = (u) => `${(state.settings.api || API_URL).replace(/\/$/, '')}/audio?u=${encodeURIComponent(u)}`;
+  let bpmCtx = null, bpmLib = null, bpmCur = null;
+
+  async function attachBpm(audio) {
+    const badge = $('.bpm', audio.closest('.item') || document.body); if (!badge) return;
+    if (bpmCur && bpmCur.audio !== audio) detachBpm();
+    if (bpmCur) return;
+    try {
+      bpmLib = bpmLib || await import(BPM_LIB);
+      bpmCtx = bpmCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (bpmCtx.state === 'suspended') await bpmCtx.resume();
+      if (!audio._src) { audio._src = bpmCtx.createMediaElementSource(audio); audio._src.connect(bpmCtx.destination); }  // once per element
+      const analyzer = await bpmLib.createRealtimeBpmAnalyzer(bpmCtx, { continuousAnalysis: true, stabilizationTime: 20000 });
+      const filter = bpmLib.getBiquadFilter(bpmCtx);
+      audio._src.connect(filter); filter.connect(analyzer); analyzer.connect(bpmCtx.destination);  // the worklet outputs silence
+      badge.textContent = '… bpm'; badge.hidden = false;
+      analyzer.on('bpm', (d) => { const c = d && d.bpm && d.bpm[0]; if (c) badge.textContent = `${Math.round(c.tempo)} bpm`; });
+      analyzer.on('bpmStable', (d) => { const c = d && d.bpm && d.bpm[0]; if (c) badge.textContent = `${Math.round(c.tempo)} bpm ✓`; });
+      bpmCur = { audio, analyzer, filter, badge };
+    } catch (e) {
+      console.warn('bpm', e); badge.textContent = 'bpm n/a'; badge.hidden = false;
+      toast('BPM analysis failed: ' + e.message, 6000);
+    }
+  }
+  function detachBpm() {
+    if (!bpmCur) return;
+    try { bpmCur.filter.disconnect(); bpmCur.analyzer.disconnect(); } catch { /* already gone */ }
+    bpmCur.badge.hidden = true; bpmCur = null;
+  }
+
   /* ---------- events ---------- */
   document.addEventListener('change', (ev) => {
     const t = ev.target;
@@ -417,6 +469,7 @@
     } else if (t.id === 'hideSeen') { state.ui.hideSeen = t.checked; save(LS.ui, state.ui); document.body.classList.toggle('hide-seen', t.checked); }
     else if (t.id === 'showUpcoming') { state.ui.showUpcoming = t.checked; save(LS.ui, state.ui); renderRinse(); }
     else if (t.id === 'rinseSort') { state.ui.rinseSort = t.value; save(LS.ui, state.ui); renderRinse(); }
+    else if (t.id === 'bpmOn') { state.ui.bpm = t.checked; save(LS.ui, state.ui); detachBpm(); renderRinse(); }
   });
   document.addEventListener('click', (ev) => {
     const t = ev.target.closest('button'); if (!t) return;
@@ -427,6 +480,7 @@
     else if (t.dataset.edit) toggleEditor(t.dataset.edit);
     else if (t.id === 'openSettings' || t.hasAttribute('data-settings')) openSettings();
     else if (t.dataset.rm) removeSource(t.dataset.rm, t.dataset.val);
+    else if (t.dataset.copy !== undefined) copyText(t.dataset.copy);
   });
   document.addEventListener('submit', (ev) => {
     const f = ev.target; if (!f.dataset.add) return;
@@ -438,6 +492,14 @@
     if (ev.target.tagName !== 'AUDIO') return;
     $$('audio').forEach((a) => { if (a !== ev.target) a.pause(); });
     $$('.player').forEach((p) => { p.innerHTML = ''; });
+    $$('.btn.play').forEach((b) => { b.textContent = '▶'; });
+    if (bpmOn()) attachBpm(ev.target);
+  }, true);
+  document.addEventListener('ended', (ev) => {  // listened to the end -> mark seen
+    if (ev.target.tagName !== 'AUDIO') return;
+    const li = ev.target.closest('.item'); if (!li) return;
+    setSeen(li.dataset.id, true); save(LS.seen, state.seen); scheduleSeenPush(); applySeenToDom();
+    toast('Marked as listened');
   }, true);
 
   function renderTabs() {
@@ -459,6 +521,7 @@
     $('#hideSeen').checked = !!state.ui.hideSeen;
     $('#showUpcoming').checked = !!state.ui.showUpcoming;
     $('#rinseSort').value = state.ui.rinseSort || 'added';
+    $('#bpmOn').checked = !!state.ui.bpm;
     renderTabs();
     $$('.editor').forEach((e) => { if (!e.hidden) renderEditor(e.id === 'rinseEditor' ? 'rinse' : 'bandcamp'); });
     const hadLocal = Object.keys(state.seen).length > 0;
