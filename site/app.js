@@ -219,6 +219,7 @@
     const r = await fetch(`data/bandcamp.json?t=${Date.now()}`, { cache: 'no-store' });
     if (!r.ok) throw new Error(`data/bandcamp.json → ${r.status}`);
     state.bc = await r.json();
+    migratePreMarks();
   }
 
   // pre-order = release date still ahead, or Bandcamp says so (data can be up to 3 h stale)
@@ -227,7 +228,18 @@
   function allBc() {
     if (!state.bc) return [];
     const ex = new Set((state.cfg.bandcamp?.exclude || []).map(String));
-    return state.bc.releases.filter((r) => !(r.via || []).every((v) => ex.has(v.subdomain || '') || ex.has(v.url)));
+    return state.bc.releases
+      .filter((r) => !(r.via || []).every((v) => ex.has(v.subdomain || '') || ex.has(v.url)))
+      // seen-state: a pre-order gets its own key, so a tick on the preview does not stick once the album is fully out
+      .map((r) => ({ ...r, rid: r.id, id: isPre(r) ? r.id + ':pre' : r.id }));
+  }
+  // one-time: ticks made on pre-orders before this rule move to the ':pre' key, so the release will show up fresh
+  function migratePreMarks() {
+    let moved = 0;
+    for (const r of allBc()) {
+      if (r.id !== r.rid && state.seen[r.rid]?.s === 1 && !state.seen[r.id]) { state.seen[r.id] = { ...state.seen[r.rid] }; delete state.seen[r.rid]; moved++; }
+    }
+    if (moved) { save(LS.seen, state.seen); scheduleSeenPush(); }
   }
   function visibleBc(tab = state.ui.bcTab) {
     const items = allBc().filter((r) => isPre(r) === (tab === 'preorders'));
@@ -262,7 +274,7 @@
     const items = visibleBc();
     for (const tab of ['released', 'preorders']) {
       const ol = $(tab === 'released' ? '#bcReleased' : '#bcPre');
-      reconcile(ol, visibleBc(tab).map((r) => Object.assign(r, { key: r.id })), bcItem);
+      reconcile(ol, visibleBc(tab).map((r) => Object.assign(r, { key: r.rid })), bcItem);
       ol.hidden = tab !== state.ui.bcTab;
     }
     if (state.bc) {
