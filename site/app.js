@@ -119,6 +119,15 @@
     }`);
     const seen = new Set();
     state.rinse = [...(d.a || []), ...(d.b || [])].filter((e) => !seen.has(e.slug) && seen.add(e.slug)).map(normRinse);
+    migrateSlugMarks();
+  }
+  function migrateSlugMarks() {
+    let moved = 0;
+    for (const it of state.rinse) {
+      const legacy = state.seen['r:' + it.slug];
+      if (it.file && legacy?.s === 1 && !state.seen[it.id]) { state.seen[it.id] = { ...legacy }; moved++; }
+    }
+    if (moved) { save(LS.seen, state.seen); scheduleSeenPush(); }
   }
 
   const rinseArt = (f) => (f ? `https://image.rinse.fm/_/${encodeURIComponent(f)}?w=112&h=112` : null);
@@ -134,7 +143,9 @@
     const backfilled = !!e.fileUrl && updated - when > 2 * 864e5;
     const img = e.featuredImage?.[0]?.filename || show.featuredImage?.[0]?.filename || show.defaultEpisodeImage?.[0]?.filename;  // episode art first
     return {
-      id: 'r:' + e.slug + (e.fileUrl ? '' : ':pending'),  // "seen" while pending must not stick once audio lands
+      // one seen-state per audio file: a rebroadcast shares its mp3 with the original, so ticking either ticks both.
+      // Pending episodes (no audio yet) get a slug key so a tick there does not stick once the audio lands.
+      id: e.fileUrl ? 'r:f:' + e.fileUrl : 'r:' + e.slug + ':pending', slug: e.slug,
       available, backfilled, addedStr: fmtDay(updated, 'Europe/London'), art: rinseArt(img),
       showSlug: show.slug || e.slug.replace(/-\d{2}-\d{2}-\d{4}-\d{4}(-\d+)?$/, ''),
       showTitle: show.title || e.title.split(' - ')[0],
@@ -163,8 +174,7 @@
     const meta = [it.backfilled ? `aired ${it.dateStr} ${it.time} · added ${it.addedStr}` : `${it.dateStr} · ${it.time}`, it.channel, it.length ? `${it.length} min` : '',
       `<a href="${esc(it.url)}" target="_blank" rel="noopener">rinse.fm</a>`,
       it.file ? `<a href="${esc(it.file)}" target="_blank" rel="noopener">mp3</a>` : '',
-      `<button type="button" class="btn ghost mini" data-copy="${esc(it.url)}" title="copy link to this episode">copy link</button>`,
-      '<span class="bpm badge" hidden></span>'].filter(Boolean).join(' · ');
+      `<button type="button" class="btn ghost mini" data-copy="${esc(it.url)}" title="copy link to this episode">copy link</button>`].filter(Boolean).join(' · ');
     return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(it.id)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${it.art ? `<img class="art" src="${esc(it.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
@@ -434,7 +444,8 @@
   let bpmCtx = null, bpmLib = null, bpmCur = null;
 
   async function attachBpm(audio) {
-    const badge = $('.bpm', audio.closest('.item') || document.body); if (!badge) return;
+    const badge = $('#bpmLive'); const li = audio.closest('.item');
+    badge.title = li ? `${$('.show', li)?.textContent || ''} ${$('.sub', li)?.textContent || ''}`.trim() : '';
     if (bpmCur && bpmCur.audio !== audio) detachBpm();
     if (bpmCur) return;
     try {

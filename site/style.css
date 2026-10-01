@@ -31,7 +31,7 @@ h1 { margin: 0; font-size: 18px; letter-spacing: .02em; }
 .btn.ghost:hover { color: var(--fg); }
 .btn.play { padding: 0 7px; font-size: 11px; line-height: 18px; vertical-align: middle; }
 .btn.mini { padding: 0 6px; font-size: 11px; line-height: 18px; vertical-align: middle; }
-.badge.bpm { background: var(--panel); color: var(--up); border: 1px solid var(--line); font-variant-numeric: tabular-nums; margin-left: 0; }
+.badge.bpm { background: var(--panel); color: var(--up); border: 1px solid var(--line); font-variant-numeric: tabular-nums; margin-left: 0; font-size: 12px; padding: 2px 8px; min-width: 64px; text-align: center; }
 button.link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; }
 
 .cols { display: grid; grid-template-columns: 1fr; }
