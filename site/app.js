@@ -176,7 +176,7 @@
       `<a href="${esc(it.url)}" target="_blank" rel="noopener">rinse.fm</a>`,
       it.file ? `<a href="${esc(it.file)}" target="_blank" rel="noopener">mp3</a>` : '',
       `<button type="button" class="btn ghost mini icon" data-copy="${esc(it.url)}" title="copy link to this episode" aria-label="copy link">${COPY_ICON}</button>`].filter(Boolean).join(' · ');
-    return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(it.id)}">
+    return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(it.id)}" data-key="${esc(it.slug)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${it.art ? `<img class="art" src="${esc(it.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
       <div class="body">
@@ -187,9 +187,26 @@
       </div></li>`;
   }
 
-  function renderRinse() {
+  /* Re-render a list by reusing existing rows (keyed) and only reordering them. Moving a node within one task does
+     not pause its <audio>, so filters/sorting no longer interrupt playback. fresh=true rebuilds every row. */
+  const tpl = document.createElement('template');
+  function reconcile(ol, items, html, fresh = false) {
+    const existing = new Map($$(':scope > .item', ol).map((li) => [li.dataset.key, li]));
+    const frag = document.createDocumentFragment();
+    for (const it of items) {
+      let li = fresh ? null : existing.get(it.key);
+      if (li) {
+        const on = isSeen(it.id); li.classList.toggle('seen', on);
+        const cb = $('.seenbox input', li); if (cb) cb.checked = on;
+      } else { tpl.innerHTML = html(it); li = tpl.content.firstElementChild; }
+      frag.appendChild(li);
+    }
+    ol.replaceChildren(frag);
+  }
+
+  function renderRinse(fresh = false) {
     const items = visibleRinse();
-    $('#rinseItems').innerHTML = items.map(rinseItem).join('');
+    reconcile($('#rinseItems'), items.map((it) => Object.assign(it, { key: it.slug })), rinseItem, fresh);
     const shows = state.cfg.rinse?.shows || [];
     $('#rinseStatus').textContent = shows.length
       ? `${items.length} episodes · ${shows.length} shows · last ${state.cfg.days_back || 30} days`
@@ -230,7 +247,7 @@
     const meta = [pre ? `out ${date}` : date, via, label, tracks,
       `<button type="button" class="btn ghost mini icon" data-copy="${esc(r.url || '')}" title="copy link to this release" aria-label="copy link">${COPY_ICON}</button>`,
       (!pre || r.streamable) ? '<button type="button" class="btn play" title="play">▶</button>' : ''].filter(Boolean).join(' · ');
-    return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(r.id)}" data-item="${esc(r.item_type)}:${esc(r.item_id)}" data-tracks="${r.tracks || 0}">
+    return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(r.id)}" data-item="${esc(r.item_type)}:${esc(r.item_id)}" data-tracks="${r.tracks || 0}" data-key="${esc(r.id)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${r.art ? `<img class="art" src="${esc(r.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
       <div class="body">
@@ -243,7 +260,11 @@
   function renderBc() {
     $$('.subtab').forEach((b) => b.classList.toggle('active', b.dataset.bctab === state.ui.bcTab));
     const items = visibleBc();
-    $('#bcItems').innerHTML = items.map(bcItem).join('');
+    for (const tab of ['released', 'preorders']) {
+      const ol = $(tab === 'released' ? '#bcReleased' : '#bcPre');
+      reconcile(ol, visibleBc(tab).map((r) => Object.assign(r, { key: r.id })), bcItem);
+      ol.hidden = tab !== state.ui.bcTab;
+    }
     if (state.bc) {
       const age = Math.round((Date.now() - new Date(state.bc.generated_at)) / 36e5);
       const errs = state.bc.errors?.length ? ` · ${state.bc.errors.length} fetch errors` : '';
@@ -532,7 +553,7 @@
     } else if (t.id === 'hideSeen') { state.ui.hideSeen = t.checked; save(LS.ui, state.ui); document.body.classList.toggle('hide-seen', t.checked); }
     else if (t.id === 'showUpcoming') { state.ui.showUpcoming = t.checked; save(LS.ui, state.ui); renderRinse(); }
     else if (t.id === 'rinseSort') { state.ui.rinseSort = t.value; save(LS.ui, state.ui); renderRinse(); }
-    else if (t.id === 'bpmOn') { state.ui.bpm = t.checked; save(LS.ui, state.ui); detachBpm(); renderRinse(); }
+    else if (t.id === 'bpmOn') { state.ui.bpm = t.checked; save(LS.ui, state.ui); detachBpm(); renderRinse(true); }
     else if (t.dataset.show) { toggleShow(t.dataset.show, t.checked); t.closest('.showrow')?.classList.toggle('on', t.checked); }
     else if (t.id === 'showHidden') renderShowList();
   });
