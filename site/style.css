@@ -82,6 +82,16 @@ audio { display: block; width: 100%; max-width: 560px; height: 32px; margin-top:
 .add { display: flex; gap: 6px; margin: 6px 0; }
 .add input { flex: 1; min-width: 0; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; }
 .hint { margin: 6px 0; color: var(--muted); font-size: 12.5px; }
+.showtools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.showtools .search { flex: 1; min-width: 160px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; }
+.showlist { max-height: 340px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); padding: 2px 0; }
+.showrow { display: flex; align-items: center; gap: 8px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
+.showrow:hover { background: var(--panel); }
+.showrow.on .t { color: var(--fg); font-weight: 600; }
+.showrow .t { color: #cfd3dc; }
+.showrow .s { color: var(--muted); font-size: 11.5px; }
+.showrow input { margin: 0; }
+.showlist .btn { margin: 6px 10px; }
 .hint.warn { color: var(--warn); }
 details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin: 6px 0; }
 

@@ -6,7 +6,7 @@
 
   const RINSE_API = 'https://admin.rinse.fm/api';
   const API_URL = 'https://releasd-api.gmbt.workers.dev';  // Cloudflare Worker from worker/
-  const LS = { seen: 'releasd.seen', settings: 'releasd.settings', cfg: 'releasd.cfg', ui: 'releasd.ui' };
+  const LS = { seen: 'releasd.seen', settings: 'releasd.settings', cfg: 'releasd.cfg', ui: 'releasd.ui', shows: 'releasd.shows' };
   const DEFAULT_CFG = { days_back: 30, rinse: { shows: [] }, bandcamp: { fan: '', labels: [], exclude: [] } };
 
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -345,9 +345,14 @@
     const c = state.cfg;
     if (which === 'rinse') {
       $('#rinseEditor').innerHTML = `
-        <div class="chips">${(c.rinse?.shows || []).map((s) => chip(s, 'rinse', s)).join('') || '<span class="hint">no shows</span>'}</div>
-        <form class="add" data-add="rinse"><input placeholder="show slug or rinse.fm/shows/… URL" required spellcheck="false"><button class="btn" type="submit">add</button></form>
+        <div class="showtools">
+          <input class="search" id="showSearch" type="search" placeholder="search shows…" autocomplete="off" spellcheck="false">
+          <label class="chk"><input type="checkbox" id="showHidden"> include hidden</label>
+          <span class="hint" id="showCount"></span>
+        </div>
+        <div class="showlist" id="showList"><span class="hint">loading show list…</span></div>
         ${syncHint()}`;
+      fetchShows().then(() => renderShowList(), (e) => { $('#showList').innerHTML = `<span class="hint warn">Could not load show list: ${esc(e.message)}</span>`; });
     } else {
       const bands = state.bc?.bands || [];
       const labels = c.bandcamp?.labels || [];
@@ -360,6 +365,52 @@
         <details><summary>followed (${bands.length}) — × to hide</summary><div class="chips">${bands.map((b) => chip(b.name, 'bchide', b.subdomain || b.url, 'hide')).join('')}</div></details>
         ${syncHint()}`;
     }
+  }
+
+  /* Rinse show catalogue (all ~3k shows, cached a day) for the follow checklist */
+  let shows = null;
+  async function fetchShows() {
+    const cached = load(LS.shows, null);
+    if (cached?.list && Date.now() - (cached.t || 0) < 864e5) { shows = cached.list; return shows; }
+    const d = await rinseQuery('{ showEntries(limit: 6000, orderBy: "title ASC") { slug title ... on show_Entry { showStatus } } }');
+    shows = (d.showEntries || []).map((x) => ({ slug: x.slug, title: x.title, hidden: x.showStatus === 'hidden' }));
+    save(LS.shows, { t: Date.now(), list: shows });
+    return shows;
+  }
+  function renderShowList() {
+    const box = $('#showList'); if (!box || !shows) return;
+    const followed = new Set(state.cfg.rinse?.shows || []);
+    const q = ($('#showSearch')?.value || '').trim().toLowerCase();
+    const withHidden = !!$('#showHidden')?.checked;
+    const bySlug = new Map(shows.map((x) => [x.slug, x]));
+    const extra = [...followed].filter((sl) => !bySlug.has(sl)).map((sl) => ({ slug: sl, title: sl, hidden: false }));  // followed but not in catalogue
+    const titleCount = new Map(); shows.forEach((x) => titleCount.set(x.title.toLowerCase(), (titleCount.get(x.title.toLowerCase()) || 0) + 1));
+    let list = [...extra, ...shows].filter((x) => followed.has(x.slug) || withHidden || !x.hidden);
+    if (q) list = list.filter((x) => x.title.toLowerCase().includes(q) || x.slug.includes(q));
+    else list.sort((a, b) => (followed.has(b.slug) - followed.has(a.slug)) || a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+    const row = (x) => `<label class="showrow${followed.has(x.slug) ? ' on' : ''}"><input type="checkbox" data-show="${esc(x.slug)}"${followed.has(x.slug) ? ' checked' : ''}>
+      <span class="t">${esc(x.title)}</span>${(titleCount.get(x.title.toLowerCase()) || 0) > 1 || x.title === x.slug ? ` <span class="s">${esc(x.slug)}</span>` : ''}${x.hidden ? ' <span class="badge">hidden</span>' : ''}</label>`;
+    const slugLike = q && /^[a-z0-9-]+$/.test(q) && !bySlug.has(q);
+    box.innerHTML = (list.map(row).join('') || '<span class="hint">no matches</span>') +
+      (slugLike && !list.length ? `<button type="button" class="btn ghost mini" data-addslug="${esc(q)}">follow “${esc(q)}” anyway</button>` : '');
+    $('#showCount').textContent = `${followed.size} followed · ${list.length} shown`;
+  }
+  let cfgTimer = null, cfgPending = { add: 0, rm: 0 };
+  function scheduleShowsCommit() {  // batch rapid ticks into one commit (each commit triggers a rebuild)
+    clearTimeout(cfgTimer);
+    cfgTimer = setTimeout(async () => {
+      const { add, rm } = cfgPending; cfgPending = { add: 0, rm: 0 };
+      await Promise.all([commitConfig(`rinse shows: +${add} −${rm}`), fetchRinse().then(renderRinse)]);
+    }, 2500);
+  }
+  function toggleShow(slug, on) {
+    state.cfg.rinse = state.cfg.rinse || { shows: [] };
+    const set = new Set(state.cfg.rinse.shows || []);
+    if (on) set.add(slug); else set.delete(slug);
+    state.cfg.rinse.shows = [...set].sort();
+    cfgPending[on ? 'add' : 'rm']++;
+    $('#showCount').textContent = `${set.size} followed`;
+    scheduleShowsCommit();
   }
 
   function toggleEditor(which) {
@@ -482,6 +533,8 @@
     else if (t.id === 'showUpcoming') { state.ui.showUpcoming = t.checked; save(LS.ui, state.ui); renderRinse(); }
     else if (t.id === 'rinseSort') { state.ui.rinseSort = t.value; save(LS.ui, state.ui); renderRinse(); }
     else if (t.id === 'bpmOn') { state.ui.bpm = t.checked; save(LS.ui, state.ui); detachBpm(); renderRinse(); }
+    else if (t.dataset.show) { toggleShow(t.dataset.show, t.checked); t.closest('.showrow')?.classList.toggle('on', t.checked); }
+    else if (t.id === 'showHidden') renderShowList();
   });
   document.addEventListener('click', (ev) => {
     const t = ev.target.closest('button'); if (!t) return;
@@ -493,7 +546,9 @@
     else if (t.id === 'openSettings' || t.hasAttribute('data-settings')) openSettings();
     else if (t.dataset.rm) removeSource(t.dataset.rm, t.dataset.val);
     else if (t.dataset.copy !== undefined) copyText(t.dataset.copy);
+    else if (t.dataset.addslug) { toggleShow(t.dataset.addslug, true); $('#showSearch').value = ''; renderShowList(); }
   });
+  document.addEventListener('input', (ev) => { if (ev.target.id === 'showSearch') renderShowList(); });
   document.addEventListener('submit', (ev) => {
     const f = ev.target; if (!f.dataset.add) return;
     ev.preventDefault();
