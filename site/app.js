@@ -14,6 +14,7 @@
   const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } };
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const COPY_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   const nonEmpty = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v));
 
   function migrateSeen(m) {
@@ -174,7 +175,7 @@
     const meta = [it.backfilled ? `aired ${it.dateStr} ${it.time} · added ${it.addedStr}` : `${it.dateStr} · ${it.time}`, it.channel, it.length ? `${it.length} min` : '',
       `<a href="${esc(it.url)}" target="_blank" rel="noopener">rinse.fm</a>`,
       it.file ? `<a href="${esc(it.file)}" target="_blank" rel="noopener">mp3</a>` : '',
-      `<button type="button" class="btn ghost mini" data-copy="${esc(it.url)}" title="copy link to this episode">copy link</button>`].filter(Boolean).join(' · ');
+      `<button type="button" class="btn ghost mini icon" data-copy="${esc(it.url)}" title="copy link to this episode" aria-label="copy link">${COPY_ICON}</button>`].filter(Boolean).join(' · ');
     return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(it.id)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${it.art ? `<img class="art" src="${esc(it.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
@@ -227,7 +228,7 @@
       ? (r.tracks ? `${r.streamable ?? '?'} of ${r.tracks} tracks available` : '')
       : [r.tracks ? `${r.tracks} tr` : '', r.duration ? fmtDur(r.duration) : ''].filter(Boolean).join(' · ');
     const meta = [pre ? `out ${date}` : date, via, label, tracks,
-      `<button type="button" class="btn ghost mini" data-copy="${esc(r.url || '')}" title="copy link to this release">copy link</button>`,
+      `<button type="button" class="btn ghost mini icon" data-copy="${esc(r.url || '')}" title="copy link to this release" aria-label="copy link">${COPY_ICON}</button>`,
       (!pre || r.streamable) ? '<button type="button" class="btn play" title="play">▶</button>' : ''].filter(Boolean).join(' · ');
     return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(r.id)}" data-item="${esc(r.item_type)}:${esc(r.item_id)}" data-tracks="${r.tracks || 0}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
