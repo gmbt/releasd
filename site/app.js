@@ -556,6 +556,14 @@
     bpmCur.badge.hidden = true; bpmCur = null;
   }
 
+  async function refreshBandcamp(btn) {
+    if (!apiReady()) return toast('Needs sync (settings) to trigger a rebuild.', 5000);
+    btn.disabled = true;
+    try { await api('/refresh', { method: 'POST' }); toast('Rebuild started — new Bandcamp data in ~5 min, then reload.', 7000); }
+    catch (e) { toast('Could not start rebuild: ' + e.message, 8000); }
+    finally { setTimeout(() => { btn.disabled = false; }, 10000); }
+  }
+
   /* ---------- events ---------- */
   document.addEventListener('change', (ev) => {
     const t = ev.target;
@@ -579,6 +587,7 @@
     else if (t.id === 'openSettings' || t.hasAttribute('data-settings')) openSettings();
     else if (t.dataset.rm) removeSource(t.dataset.rm, t.dataset.val);
     else if (t.dataset.copy !== undefined) copyText(t.dataset.copy);
+    else if (t.id === 'bcRefresh') refreshBandcamp(t);
     else if (t.dataset.addslug) { toggleShow(t.dataset.addslug, true); $('#showSearch').value = ''; renderShowList(); }
   });
   document.addEventListener('input', (ev) => { if (ev.target.id === 'showSearch') renderShowList(); });

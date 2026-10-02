@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent
 SITE = ROOT / "site"
 DATA = SITE / "data"
 CACHE = ROOT / "cache" / "tralbums.json"   # per-release details; persisted between runs via actions/cache
+FOLLOWS_CACHE = ROOT / "cache" / "follows.json"  # last good follow list; used when Bandcamp blocks the profile page
 BC = "https://bandcamp.com"
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/128.0 Safari/537.36")
@@ -86,10 +87,41 @@ def parse_date(s: str) -> datetime:
 
 
 def fan_id(username: str) -> int:
-    blob = data_attr(http(f"{BC}/{username}"), "blob")
-    if not blob or "fan_data" not in blob:
-        raise RuntimeError("no fan data on profile page (private profile or wrong username?)")
-    return int(blob["fan_data"]["fan_id"])
+    """Resolve fan_id from the public profile page. Bandcamp sometimes serves bot-challenge HTML to CI runners,
+    so retry a few times and report what came back."""
+    last = ""
+    for i in range(3):
+        page = http(f"{BC}/{username}")
+        blob = data_attr(page, "blob")
+        if blob and "fan_data" in blob:
+            return int(blob["fan_data"]["fan_id"])
+        m = re.search(r"<title>(.*?)</title>", page, re.S)
+        last = (m.group(1).strip() if m else page[:80]).replace("\n", " ")[:80]
+        time.sleep(8 * (i + 1))
+    raise RuntimeError(f"no fan data on profile page after 3 tries (page title: {last!r})")
+
+
+def load_follows(bc: dict, errors: list[str]) -> list[dict]:
+    """Current follows from the profile; on failure fall back to the cached list from the last good run."""
+    cached = None
+    if FOLLOWS_CACHE.exists():
+        try:
+            cached = json.loads(FOLLOWS_CACHE.read_text())
+        except json.JSONDecodeError:
+            cached = None
+    try:
+        fid = int(bc["fan_id"]) if bc.get("fan_id") else fan_id(bc["fan"])
+        follows = following(fid)
+        if not follows:
+            raise RuntimeError("profile returned an empty follow list")
+        FOLLOWS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        FOLLOWS_CACHE.write_text(json.dumps({"fan": bc["fan"], "fan_id": fid, "t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "follows": follows}))
+        return follows
+    except Exception as e:  # noqa: BLE001
+        if cached and cached.get("fan") == bc["fan"] and cached.get("follows"):
+            errors.append(f"fan {bc['fan']}: {e} -> using cached follows from {cached.get('t')}")
+            return cached["follows"]
+        raise
 
 
 def following(fid: int) -> list[dict]:
@@ -170,7 +202,7 @@ def main() -> int:
 
     if bc.get("fan"):
         try:
-            for f in following(fan_id(bc["fan"])):
+            for f in load_follows(bc, errors):
                 b = band_from_follow(f)
                 bands[b["band_id"]] = b
         except Exception as e:  # noqa: BLE001
@@ -185,6 +217,10 @@ def main() -> int:
     excl = {str(x).rstrip("/") for x in bc.get("exclude") or []}
     bands = {k: v for k, v in bands.items()
              if not ({str(k), v.get("subdomain") or "", v["url"]} & excl)}
+    if not bands:
+        # refusing to publish an empty dataset: the deploy job is skipped and the last good data stays live
+        print("no bands resolved; not publishing:", "; ".join(errors), file=sys.stderr)
+        return 1
 
     releases: dict[str, dict] = {}
     for b in bands.values():
