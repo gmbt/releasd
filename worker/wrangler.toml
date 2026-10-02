@@ -1,7 +1,8 @@
 # releasd private backend: seen-marks store + GitHub proxy for config edits.
 # Secrets (set with `npx wrangler secret put <NAME>`):
 #   API_KEY   - long random string; the page sends it as Bearer token (from the #k= URL fragment)
-#   GH_TOKEN  - fine-grained GitHub PAT, Contents: read & write on GH_OWNER/GH_REPO only
+#   GH_TOKEN  - fine-grained GitHub PAT on GH_OWNER/GH_REPO: Contents read & write, Actions read & write (for /refresh + cron)
+#   ADMIN_KEY - shared with the GitHub Action (repo secret RELEASD_ADMIN_KEY); lets it upload built Bandcamp data
 name = "releasd-api"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
@@ -14,3 +15,7 @@ ALLOWED_ORIGINS = "https://gmbt.github.io,http://localhost:8000"
 [[kv_namespaces]]
 binding = "STATE"
 id = "059ef67e0a1347098365d93402420729"
+
+# triggers the GitHub build every 2 hours (GitHub's own schedule is often delayed or skipped)
+[triggers]
+crons = ["5 */2 * * *"]

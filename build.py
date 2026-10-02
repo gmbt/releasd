@@ -74,7 +74,17 @@ def http(url: str, payload: dict | None = None, tries: int = 8) -> str:
 
 
 def api(path: str, payload: dict) -> dict:
-    return json.loads(http(f"{BC}/api/{path}", payload))
+    """JSON call; Bandcamp occasionally answers CI runners with an HTML block page (HTTP 200), so retry and report it."""
+    for i in range(3):
+        body = http(f"{BC}/api/{path}", payload)
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            snippet = re.sub(r"\s+", " ", body[:160])
+            if i == 2:
+                raise RuntimeError(f"non-JSON response from {path}: {snippet!r}")
+            time.sleep(20 * (i + 1))
+    raise RuntimeError("unreachable")
 
 
 def data_attr(page: str, name: str) -> dict | None:
@@ -274,7 +284,23 @@ def main() -> int:
           f"{_stats['requests']} requests, {_stats['retries']} retries after 429, {len(errors)} errors")
     for e in errors:
         print("  !", e, file=sys.stderr)
-    return 0
+    return upload(out)
+
+
+def upload(out: dict) -> int:
+    """Push the result to the Worker (the page reads it from there); only reached when the build produced data."""
+    api_url, key = os.environ.get("RELEASD_API"), os.environ.get("RELEASD_ADMIN_KEY")
+    if not (api_url and key):
+        return 0
+    req = request.Request(api_url.rstrip("/") + "/admin/bandcamp", data=json.dumps(out, ensure_ascii=False).encode(), method="PUT",
+                          headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": UA})
+    try:
+        with request.urlopen(req, timeout=60) as r:
+            print("uploaded to worker:", r.read().decode()[:120])
+        return 0
+    except error.HTTPError as e:
+        print("worker upload failed:", e.code, e.read().decode()[:200], file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

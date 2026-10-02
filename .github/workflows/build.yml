@@ -30,7 +30,14 @@ jobs:
           path: cache
           key: bandcamp-cache-${{ github.run_id }}
           restore-keys: bandcamp-cache-
-      - run: python build.py
+      - id: data
+        run: python build.py
+        continue-on-error: true   # data lives in the Worker; a blocked/failed fetch must not stop the site deploy
+        env:
+          RELEASD_API: https://releasd-api.gmbt.workers.dev
+          RELEASD_ADMIN_KEY: ${{ secrets.RELEASD_ADMIN_KEY }}
+      - if: steps.data.outcome == 'failure'
+        run: echo "::warning::Bandcamp data build failed; previous data stays live in the Worker"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

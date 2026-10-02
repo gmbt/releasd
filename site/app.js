@@ -216,6 +216,9 @@
 
   /* ---------- bandcamp ---------- */
   async function fetchBandcamp() {
+    if (apiReady()) {  // built data is kept in the Worker (only replaced by successful builds)
+      try { const d = await api('/bandcamp'); if (d?.bands?.length) { state.bc = d; migratePreMarks(); return; } } catch (e) { console.warn('bandcamp via API', e); }
+    }
     const r = await fetch(`data/bandcamp.json?t=${Date.now()}`, { cache: 'no-store' });
     if (!r.ok) throw new Error(`data/bandcamp.json → ${r.status}`);
     state.bc = await r.json();

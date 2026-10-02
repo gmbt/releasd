@@ -14,9 +14,12 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
     if (url.pathname === '/health') return json({ ok: true }, 200, cors);
     if (url.pathname === '/audio' && req.method === 'GET') return audioRelay(req, url, cors);
+    if (url.pathname.startsWith('/admin/')) return admin(req, url, env, cors);
     if (!authorized(req, env)) return json({ error: 'unauthorized' }, 401, cors);
     try {
       const route = `${req.method} ${url.pathname}`;
+      if (route === 'GET /bandcamp') return json((await env.STATE.get(BC_KEY, 'json')) || { bands: [], releases: [], errors: ['no data yet'] }, 200, cors);
+      if (route === 'POST /refresh') { await dispatchBuild(env); return json({ ok: true }, 200, cors); }
       if (route === 'GET /seen') return json(await getSeen(env), 200, cors);
       if (route === 'PUT /seen') return json(await putSeen(env, await req.json()), 200, cors);
       if (route === 'GET /config') return json(await getConfig(env), 200, cors);
@@ -26,7 +29,33 @@ export default {
       return json({ error: String(e && e.message || e) }, 502, cors);
     }
   },
+  // GitHub's own cron is unreliable (delayed/skipped on quiet repos); this one is not
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(dispatchBuild(env).catch((e) => console.log('cron dispatch failed:', e.message)));
+  },
 };
+
+/* ---------- built Bandcamp data + build trigger ----------
+   The GitHub Action uploads its result here only when the build succeeded, so a failed/blocked run never blanks
+   the page. ADMIN_KEY is a separate secret shared only with the Action. */
+const BC_KEY = 'bandcamp';
+function bearer(req) { const h = req.headers.get('Authorization') || ''; return h.startsWith('Bearer ') ? h.slice(7).trim() : ''; }
+async function admin(req, url, env, cors) {
+  const key = bearer(req);
+  if (!env.ADMIN_KEY || key.length !== env.ADMIN_KEY.length || !timingSafeEqual(key, env.ADMIN_KEY)) return json({ error: 'unauthorized' }, 401, cors);
+  try {
+    if (url.pathname === '/admin/bandcamp' && req.method === 'PUT') {
+      const data = await req.json();
+      if (!data || !Array.isArray(data.releases) || !Array.isArray(data.bands) || !data.bands.length) return json({ error: 'refusing empty or invalid dataset' }, 400, cors);
+      await env.STATE.put(BC_KEY, JSON.stringify(data));
+      return json({ ok: true, bands: data.bands.length, releases: data.releases.length }, 200, cors);
+    }
+    return json({ error: 'not found' }, 404, cors);
+  } catch (e) { return json({ error: String(e && e.message || e) }, 502, cors); }
+}
+async function dispatchBuild(env) {  // needs the GH token to have Actions: read & write
+  await gh(env, '/actions/workflows/build.yml/dispatches', { method: 'POST', body: JSON.stringify({ ref: 'main' }) });
+}
 
 /* ---------- plumbing ---------- */
 function corsHeaders(origin, env) {
