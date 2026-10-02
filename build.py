@@ -38,6 +38,23 @@ _lock = threading.Lock()
 _stats = {"requests": 0, "retries": 0}
 
 
+# Bandcamp serves a bot-challenge page to GitHub's runner IPs. When the Worker is configured, every bandcamp.com
+# request is relayed through it (Cloudflare egress), see worker/src/index.js bcProxy().
+PROXY_API = os.environ.get("RELEASD_API", "").rstrip("/")
+PROXY_KEY = os.environ.get("RELEASD_ADMIN_KEY", "")
+
+
+def via_proxy(url: str, data: bytes | None) -> tuple[str, dict]:
+    from urllib.parse import quote
+    host = url.split("/")[2] if url.startswith("https://") else ""
+    if not (PROXY_API and PROXY_KEY and (host == "bandcamp.com" or host.endswith(".bandcamp.com"))):
+        return url, {}
+    auth = {"Authorization": f"Bearer {PROXY_KEY}"}
+    if url.startswith(BC + "/api/") and data is not None:
+        return f"{PROXY_API}/admin/bc?path={quote(url[len(BC) + 5:], safe='/')}", auth
+    return f"{PROXY_API}/admin/bc?url={quote(url, safe='')}", auth
+
+
 def http(url: str, payload: dict | None = None, tries: int = 8) -> str:
     """Single-file sequential HTTP with adaptive throttling (honours Retry-After on 429)."""
     global _delay
@@ -45,6 +62,9 @@ def http(url: str, payload: dict | None = None, tries: int = 8) -> str:
     headers = {"User-Agent": UA}
     if data:
         headers["Content-Type"] = "application/json"
+    if PROXY_API and PROXY_KEY:
+        url, extra = via_proxy(url, data)
+        headers.update(extra)
     req = request.Request(url, data=data, headers=headers)
     for i in range(tries):
         with _lock:

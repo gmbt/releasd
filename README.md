@@ -33,6 +33,11 @@ No backend. Static page on GitHub Pages. A Python script in GitHub Actions refre
    - `GET/PUT /seen` — seen marks in Workers KV, merged per item (last-write-wins), pruned after 180 days.
    - `GET/PUT /config` — reads/commits `config.json` in the repo (a commit triggers the rebuild).
    - CORS is limited to `ALLOWED_ORIGINS` in `wrangler.toml`.
+   - `GET /bandcamp` — the built Bandcamp dataset. The Action uploads it via `PUT /admin/bandcamp` (secret `ADMIN_KEY`,
+     repo secret `RELEASD_ADMIN_KEY`) only when a build succeeded, so a failed run never blanks the page.
+   - `/admin/bc` — Bandcamp egress proxy for the Action: Bandcamp serves a bot-challenge page to GitHub's runner IPs.
+   - `POST /refresh` + a 2-hourly cron trigger start the GitHub build (GitHub's own schedule is often delayed);
+     both need the GitHub token to also have **Actions: read & write**.
 
    Without the backend the page still works read-only: edits and seen marks stay in the browser.
 

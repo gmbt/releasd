@@ -50,8 +50,36 @@ async function admin(req, url, env, cors) {
       await env.STATE.put(BC_KEY, JSON.stringify(data));
       return json({ ok: true, bands: data.bands.length, releases: data.releases.length }, 200, cors);
     }
+    if (url.pathname === '/admin/bc' && (req.method === 'POST' || req.method === 'GET')) return bcProxy(req, url, cors);
     return json({ error: 'not found' }, 404, cors);
   } catch (e) { return json({ error: String(e && e.message || e) }, 502, cors); }
+}
+
+/* Bandcamp egress proxy for the GitHub Action: Bandcamp serves a bot-challenge page to GitHub's runner IPs,
+   Cloudflare's are (so far) fine. POST /admin/bc?path=mobile/24/band_details with the JSON body to forward,
+   or GET /admin/bc?url=https://<x>.bandcamp.com/... for an HTML page. Upstream status/body pass through. */
+const BC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36';
+async function bcProxy(req, url, cors) {
+  let target;
+  if (req.method === 'POST') {
+    const path = url.searchParams.get('path') || '';
+    if (!/^[a-z0-9_/.]+$/i.test(path)) return json({ error: 'bad path' }, 400, cors);
+    target = `https://bandcamp.com/api/${path}`;
+  } else {
+    try { target = new URL(url.searchParams.get('url') || ''); } catch { return json({ error: 'bad url' }, 400, cors); }
+    if (target.protocol !== 'https:' || !/(^|\.)bandcamp\.com$/.test(target.hostname)) return json({ error: 'host not allowed' }, 403, cors);
+    target = target.toString();
+  }
+  const up = await fetch(target, {
+    method: req.method,
+    headers: { 'User-Agent': BC_UA, 'Accept': req.method === 'POST' ? 'application/json' : 'text/html', ...(req.method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
+    body: req.method === 'POST' ? await req.text() : undefined,
+    cf: { cacheEverything: false },
+  });
+  const out = new Headers(cors);
+  out.set('Content-Type', up.headers.get('Content-Type') || 'application/octet-stream');
+  const ra = up.headers.get('Retry-After'); if (ra) out.set('Retry-After', ra);
+  return new Response(up.body, { status: up.status, headers: out });
 }
 async function dispatchBuild(env) {  // needs the GH token to have Actions: read & write
   await gh(env, '/actions/workflows/build.yml/dispatches', { method: 'POST', body: JSON.stringify({ ref: 'main' }) });
