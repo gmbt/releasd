@@ -563,7 +563,7 @@
     if (!apiReady()) return toast('Needs sync (settings) to trigger a rebuild.', 5000);
     btn.disabled = true;
     try { await api('/refresh', { method: 'POST' }); toast('Rebuild started — new Bandcamp data in ~5 min, then reload.', 7000); }
-    catch (e) { toast('Could not start rebuild: ' + e.message, 8000); }
+    catch (e) { toast('Could not start rebuild — ' + e.message.replace(/^API \d+: ?/, ''), 10000); }
     finally { setTimeout(() => { btn.disabled = false; }, 10000); }
   }
 

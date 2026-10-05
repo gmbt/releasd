@@ -19,7 +19,13 @@ export default {
     try {
       const route = `${req.method} ${url.pathname}`;
       if (route === 'GET /bandcamp') return json((await env.STATE.get(BC_KEY, 'json')) || { bands: [], releases: [], errors: ['no data yet'] }, 200, cors);
-      if (route === 'POST /refresh') { await dispatchBuild(env); return json({ ok: true }, 200, cors); }
+      if (route === 'POST /refresh') {
+        try { await dispatchBuild(env); return json({ ok: true }, 200, cors); }
+        catch (e) {
+          if (/GitHub 403/.test(e.message)) return json({ error: 'GitHub token lacks the "Actions: read & write" permission (edit it at github.com/settings/personal-access-tokens)' }, 403, cors);
+          throw e;
+        }
+      }
       if (route === 'GET /seen') return json(await getSeen(env), 200, cors);
       if (route === 'PUT /seen') return json(await putSeen(env, await req.json()), 200, cors);
       if (route === 'GET /config') return json(await getConfig(env), 200, cors);
