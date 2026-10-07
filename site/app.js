@@ -240,7 +240,8 @@
   function migratePreMarks() {
     let moved = 0;
     for (const r of allBc()) {
-      if (r.id !== r.rid && state.seen[r.rid]?.s === 1 && !state.seen[r.id]) { state.seen[r.id] = { ...state.seen[r.rid] }; delete state.seen[r.rid]; moved++; }
+      // copy the tick to the ':pre' key and *tombstone* the plain one (a delete never reaches the server; an s:0 record does)
+      if (r.id !== r.rid && state.seen[r.rid]?.s === 1 && !state.seen[r.id]) { state.seen[r.id] = { ...state.seen[r.rid] }; state.seen[r.rid] = { t: Date.now(), s: 0 }; moved++; }
     }
     if (moved) { save(LS.seen, state.seen); scheduleSeenPush(); }
   }
