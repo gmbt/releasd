@@ -371,7 +371,22 @@
   document.addEventListener('visibilitychange', async () => {
     if (document.hidden || !state.cfg) return;
     if (await pullSeen()) applySeenToDom();
+    if (Date.now() - lastFetch > REFETCH_AFTER_HIDDEN) refetchFeeds();
   });
+
+  /* Keep the lists current while the tab stays open: re-download (not rebuild) both feeds when returning to the tab
+     after 15 min, and every 30 min while visible. Rows are reused, so a playing mix is not interrupted. */
+  const REFETCH_AFTER_HIDDEN = 15 * 60e3, REFETCH_EVERY = 30 * 60e3;
+  let lastFetch = 0, refreshing = false;
+  async function refetchFeeds() {
+    if (refreshing || !state.cfg) return;
+    refreshing = true;
+    try {
+      await Promise.allSettled([fetchRinse().then(renderRinse), fetchBandcamp().then(renderBc)]);
+      lastFetch = Date.now();
+    } finally { refreshing = false; }
+  }
+  setInterval(() => { if (!document.hidden && Date.now() - lastFetch > REFETCH_EVERY) refetchFeeds(); }, 60e3);
 
   /* ---------- source editors ---------- */
   const chip = (label, kind, val, title = 'remove') => `<span class="chip">${esc(label)}<button type="button" data-rm="${kind}" data-val="${esc(val)}" title="${title}">×</button></span>`;
@@ -643,6 +658,7 @@
       fetchBandcamp().then(renderBc, (e) => { $('#bcStatus').textContent = 'No Bandcamp data yet — run build.py or wait for the Action. ' + e.message; }),
     ]);
     renderRinse(); renderBc();
+    lastFetch = Date.now();
     if (hadLocal) scheduleSeenPush();  // upload marks made on this device before/without sync
   }
   init();
