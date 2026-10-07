@@ -1,86 +1,69 @@
 # releasd
 
-One page for the two feeds you actually follow:
+One page for the two feeds I actually follow, with inline playback and a shared "listened" state across devices.
 
-- **Rinse FM** — newest episodes of the shows you pick, playable inline (mp3 from replay.rinse.fm). Rebroadcasts flagged.
-- **Bandcamp** — newest releases (last 30 days + pre-orders) from every artist/label your Bandcamp profile follows. Official embedded player.
+- **Rinse FM** — newest episodes of followed shows, sorted by when the audio became available (shows are often
+  archived days or weeks after airing). Badges: rebroadcast, backfilled, upcoming, not archived yet. Inline mp3 player,
+  optional live BPM readout, auto-marked as listened when played to the end.
+- **Bandcamp** — newest releases (last 60 days) from every artist/label my profile follows, split into Released and
+  Pre-orders (with "n of m tracks available"). Official embedded player with full tracklist.
 
-No backend. Static page on GitHub Pages. A Python script in GitHub Actions refreshes Bandcamp data every 3 h; Rinse is queried live from the browser.
+## Architecture
+
+```
+GitHub Pages (site/)  ──live──▶  admin.rinse.fm GraphQL          (Rinse, fetched by the browser)
+        │ key from #k= link
+        ▼
+Cloudflare Worker (worker/) ── KV: seen marks, config cache, built Bandcamp dataset
+        ▲ upload on success            │ egress proxy (Bandcamp blocks GitHub runner IPs)
+GitHub Action (build.py, every ~3 h or on demand) ──▶ bandcamp.com mobile API
+```
+
+- The page is static. Rinse is queried live; Bandcamp data comes from the Worker's store.
+- The Action only *uploads* when it produced data, so a blocked or failed run never blanks the page.
+- Show/label edits from the UI are committed to `config.json` through the Worker (the GitHub token lives only there).
+- Seen marks: per item, last-write-wins, merged server-side; a rebroadcast shares the state of its original;
+  pre-orders and not-yet-archived episodes have their own key so a tick there does not stick once the real thing lands.
 
 ## Setup
 
-1. Create a GitHub repo (e.g. `releasd`), push this.
-2. Pages source = **GitHub Actions**:
-   `gh api -X POST repos/OWNER/releasd/pages -f build_type=workflow`
-   (or Settings → Pages → Source → GitHub Actions).
-3. Run the `build` workflow (it also runs on every push and every 3 h). Page: `https://OWNER.github.io/releasd/`.
-4. **Sync backend** (optional, but needed for editing from the page and for seen marks across devices):
-   a tiny Cloudflare Worker in `worker/`, free tier.
-
+1. Repo + Pages: `gh repo create releasd --public --source=. --push`, then
+   `gh api -X POST repos/OWNER/releasd/pages -f build_type=workflow`.
+2. Worker (free tier):
    ```sh
    cd worker
-   npx wrangler login                                  # once, opens the browser
-   npx wrangler kv namespace create STATE              # paste the returned id into wrangler.toml
-   npx wrangler secret put API_KEY                     # long random string, e.g. `openssl rand -hex 24`
-   npx wrangler secret put GH_TOKEN                    # fine-grained PAT: only this repo, Contents: read & write
-   npx wrangler deploy                                 # prints https://releasd-api.<you>.workers.dev
+   npx wrangler login
+   npx wrangler kv namespace create STATE        # id -> wrangler.toml
+   npx wrangler secret put API_KEY               # page key, e.g. openssl rand -hex 24
+   npx wrangler secret put ADMIN_KEY             # shared with the Action
+   npx wrangler secret put GH_TOKEN              # fine-grained PAT, this repo only: Contents RW + Actions RW
+   npx wrangler deploy
    ```
-
-   Put the Worker URL into `API_URL` at the top of `site/app.js`, push. Then open the page once per device via your
-   personal link `https://OWNER.github.io/releasd/#k=<API_KEY>`; the key is remembered in that browser (settings shows
-   the link with a copy button). The GitHub token lives only in the Worker, never in a browser.
-
-   - `GET/PUT /seen` — seen marks in Workers KV, merged per item (last-write-wins), pruned after 180 days.
-   - `GET/PUT /config` — reads/commits `config.json` in the repo (a commit triggers the rebuild).
-   - CORS is limited to `ALLOWED_ORIGINS` in `wrangler.toml`.
-   - `GET /bandcamp` — the built Bandcamp dataset. The Action uploads it via `PUT /admin/bandcamp` (secret `ADMIN_KEY`,
-     repo secret `RELEASD_ADMIN_KEY`) only when a build succeeded, so a failed run never blanks the page.
-   - `/admin/bc` — Bandcamp egress proxy for the Action: Bandcamp serves a bot-challenge page to GitHub's runner IPs.
-   - `POST /refresh` + a 2-hourly cron trigger start the GitHub build (GitHub's own schedule is often delayed);
-     both need the GitHub token to also have **Actions: read & write**.
-
-   Without the backend the page still works read-only: edits and seen marks stay in the browser.
+   Set `API_URL` in `site/app.js` to the printed URL. `gh secret set RELEASD_ADMIN_KEY` with the same admin key.
+3. Open the page once per device via `https://OWNER.github.io/releasd/#k=<API_KEY>` (settings shows the link).
 
 ## config.json
 
 ```json
-{
-  "days_back": 30,
-  "rinse":    { "shows": ["hodge", "josi-devil", "portway"] },
-  "bandcamp": { "fan": "gmbt", "labels": ["https://hyperdub.bandcamp.com"], "exclude": ["somesubdomain"] }
-}
+{ "days_back": 60,
+  "rinse":    { "shows": ["hodge", "josi-devil"] },
+  "bandcamp": { "fan": "gmbt", "fan_id": 8528257, "labels": [], "exclude": [] } }
 ```
 
-- `rinse.shows` — slugs from `rinse.fm/shows/<slug>`.
-- `bandcamp.fan` — your Bandcamp username; profile must be public. All followed artists/labels are included.
-- `bandcamp.labels` — extra label/artist URLs not in your follows.
-- `bandcamp.exclude` — subdomains (or URLs / band ids) to hide.
+`rinse.shows` = slugs from `rinse.fm/shows/<slug>` (edit from the page: searchable list of all shows).
+`bandcamp.fan`/`fan_id` = public Bandcamp profile; `labels` adds URLs not followed; `exclude` hides subdomains.
 
 ## Local
 
 ```sh
-python3 build.py                      # -> site/data/bandcamp.json, site/config.json
-python3 -m http.server -d site 8000   # http://localhost:8000
-```
-
-## How it works
-
-- Rinse: Craft CMS GraphQL at `https://admin.rinse.fm/api` (public, CORS `*`). Episodes filtered by `parentShow` slug,
-  ordered by `episodeDate`; `episodeTime` only carries the time of day. Rinse "My Rinse" follows are not exposed by any API.
-- Bandcamp: the mobile-app JSON API. `fancollection/1/following_bands` → your follows;
-  `mobile/24/band_details` → discography with release dates; `mobile/24/tralbum_details` → page URL and tracklist.
-  No CORS, hence prebuilt.
-
-Both APIs are unofficial and may change.
-
-## Importing your Rinse follows (untested)
-
-On your My Rinse page, run this bookmarklet; it lists the show slugs linked on the page:
-
-```js
-javascript:(()=>{const s=[...new Set([...document.querySelectorAll('a[href*="/shows/"]')].map(a=>a.getAttribute('href').split('/shows/')[1].split(/[/?#]/)[0]).filter(Boolean))];prompt('Rinse show slugs',s.join(', '))})()
+python3 build.py                      # direct to Bandcamp; RELEASD_API + RELEASD_ADMIN_KEY env -> via Worker + upload
+python3 -m http.server -d site 8000
 ```
 
 ## Notes
 
-- GitHub disables scheduled workflows on public repos after 60 days without commits. Any edit from the page counts as activity, or re-enable it under Actions.
+- Rinse: Craft CMS GraphQL at `https://admin.rinse.fm/api` (public, CORS `*`). `episodeTime` is time-of-day only;
+  `dateUpdated` marks when audio was attached. Artwork via `image.rinse.fm/_/<file>?w=&h=`.
+- Bandcamp: unofficial mobile-app API (`band_details`, `tralbum_details`, `fancollection/.../following_bands`).
+  Rate-limited per IP in bursts; the builder is sequential with backoff.
+- GitHub's cron is unreliable; the Worker triggers the build every 2 h and the page has a refresh button.

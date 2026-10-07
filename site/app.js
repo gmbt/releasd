@@ -295,6 +295,7 @@
     const wasOpen = !!box.firstChild;
     $$('.player').forEach((p) => { p.innerHTML = ''; });
     $$('.btn.play').forEach((b) => { b.textContent = '▶'; });
+    $$('.item.playing').forEach((el) => el.classList.remove('playing'));
     if (wasOpen) return;
     $$('audio').forEach((a) => a.pause());
     const [type, id] = li.dataset.item.split(':');
@@ -304,6 +305,7 @@
     const height = list ? Math.min(165 + 33 * tracks, 420) : 120;
     box.innerHTML = `<iframe src="https://bandcamp.com/EmbeddedPlayer/${esc(type)}=${esc(id)}/size=large/bgcol=161618/linkcol=9bd0ff/tracklist=${list}/artwork=small/transparent=true/" style="height:${height}px" loading="lazy" title="Bandcamp player"></iframe>`;
     $('.btn.play', li).textContent = '✕';
+    li.classList.add('playing');
   }
 
   /* ---------- seen ---------- */
@@ -620,11 +622,14 @@
     $$('audio').forEach((a) => { if (a !== ev.target) a.pause(); });
     $$('.player').forEach((p) => { p.innerHTML = ''; });
     $$('.btn.play').forEach((b) => { b.textContent = '▶'; });
+    $$('.item.playing').forEach((li) => li.classList.remove('playing'));
+    ev.target.closest('.item')?.classList.add('playing');
     if (bpmOn()) attachBpm(ev.target);
   }, true);
   document.addEventListener('ended', (ev) => {  // listened to the end -> mark seen
     if (ev.target.tagName !== 'AUDIO') return;
     const li = ev.target.closest('.item'); if (!li) return;
+    li.classList.remove('playing');
     setSeen(li.dataset.id, true); save(LS.seen, state.seen); scheduleSeenPush(); applySeenToDom();
     toast('Marked as listened');
   }, true);

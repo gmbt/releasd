@@ -15,6 +15,7 @@ button { font: inherit; color: inherit; }
 .top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
   padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
 h1 { margin: 0; font-size: 18px; letter-spacing: .02em; }
+.by { font-size: 10.5px; font-weight: 400; color: var(--muted); margin-left: 2px; vertical-align: super; letter-spacing: .03em; }
 .tabs, .subtabs { display: flex; gap: 4px; }
 .subtabs { margin: 2px 0 6px; }
 .tab, .subtab { background: none; border: 1px solid transparent; border-radius: 6px; padding: 4px 10px; cursor: pointer; color: var(--muted); }
@@ -51,7 +52,8 @@ h2 { margin: 8px 0; font-size: 12.5px; text-transform: uppercase; letter-spacing
 .status { margin: 4px 0 8px; color: var(--muted); font-size: 12.5px; }
 
 .items { list-style: none; margin: 0; padding: 0; }
-.item { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: start; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.item { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: start; padding: 10px 8px; margin: 0 -8px; border-bottom: 1px solid var(--line); border-radius: 6px; }
+.item.playing { background: rgba(155, 208, 255, .07); box-shadow: inset 3px 0 0 var(--accent); }
 .item.has-art { grid-template-columns: 18px 56px 1fr; }
 .item.seen { opacity: .4; }
 body.hide-seen .item.seen { display: none; }
