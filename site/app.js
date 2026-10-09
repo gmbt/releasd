@@ -182,7 +182,7 @@
       `<button type="button" class="btn ghost mini icon star${saved ? ' on' : ''}" data-save="${esc(it.slug)}" title="${saved ? 'remove from saved' : 'save this set'}" aria-label="save">${STAR_ICON}</button>`].filter(Boolean).join(' · ');
     const notes = mode === 'saved' ? `<div class="notes">
           <div class="noterow"><button type="button" class="btn ghost mini notebtn" data-notetoggle="${esc(it.slug)}" title="show / hide the notes editor">✎ notes</button><span class="stamps">${stampsHtml(it.note || '')}</span></div>
-          <textarea class="note" data-note="${esc(it.slug)}" rows="2" spellcheck="false" hidden placeholder="notes — e.g. 1:31 really cool bassy track, nice for the outro">${esc(it.note || '')}</textarea>
+          <textarea class="note" data-note="${esc(it.slug)}" rows="2" spellcheck="false" hidden placeholder="e.g. 1:31 nice track">${esc(it.note || '')}</textarea>
         </div>` : '';
     return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(it.id)}" data-key="${esc(it.slug)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
@@ -203,6 +203,9 @@
     for (const line of String(note).split(/\n/)) {
       const re = /(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?!\d)/g; let m; const found = [];
       while ((m = re.exec(line))) found.push({ idx: m.index, len: m[0].length, sec: (Number(m[1] || 0) * 3600) + Number(m[2]) * 60 + Number(m[3]), text: m[0] });
+      // text with no timestamp (a comment about the whole set, or words before the first stamp) is shown as plain text on its own line
+      const lead = line.slice(0, found.length ? found[0].idx : line.length).trim();
+      if (lead) out.push(`<span class="notetext">${esc(lead)}</span>`);
       found.forEach((f, i) => {
         const end = i + 1 < found.length ? found[i + 1].idx : line.length;
         const label = line.slice(f.idx + f.len, end).replace(/^[\s\-–:,.]+|[\s\-–:,.]+$/g, '').slice(0, 60);

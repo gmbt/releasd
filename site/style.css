@@ -122,6 +122,7 @@ textarea.note:focus { border-color: var(--accent); outline: none; }
 .noterow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .stamps { display: contents; }
 .notebtn.on { color: var(--fg); border-color: var(--accent); }
+.notetext { flex-basis: 100%; font-size: 13px; color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
 textarea.note { margin-top: 6px; }
 .stamp { border: 0; border-radius: 12px; padding: 2px 9px; background: var(--line); color: var(--fg); font-size: 12px; cursor: pointer; }
 .stamp:hover { background: #33333a; }
