@@ -119,8 +119,10 @@ body.hide-seen #rinseSaved .item.seen { display: grid; }
 textarea.note { display: block; width: 100%; min-height: 44px; resize: none; overflow: hidden; padding: 6px 8px; border-radius: 6px;
   border: 1px solid var(--line); background: var(--panel); color: var(--fg); font: inherit; font-size: 13px; line-height: 1.45; }
 textarea.note:focus { border-color: var(--accent); outline: none; }
-.stamps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.stamps:empty { display: none; }
+.noterow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.stamps { display: contents; }
+.notebtn.on { color: var(--fg); border-color: var(--accent); }
+textarea.note { margin-top: 6px; }
 .stamp { border: 0; border-radius: 12px; padding: 2px 9px; background: var(--line); color: var(--fg); font-size: 12px; cursor: pointer; }
 .stamp:hover { background: #33333a; }
 .stamp b { color: var(--accent); font-weight: 600; margin-right: 5px; font-variant-numeric: tabular-nums; }

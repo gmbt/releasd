@@ -180,7 +180,10 @@
       it.file ? `<a href="${esc(it.file)}" target="_blank" rel="noopener">mp3</a>` : '',
       `<button type="button" class="btn ghost mini icon" data-copy="${esc(it.url)}" title="copy link to this episode" aria-label="copy link">${COPY_ICON}</button>`,
       `<button type="button" class="btn ghost mini icon star${saved ? ' on' : ''}" data-save="${esc(it.slug)}" title="${saved ? 'remove from saved' : 'save this set'}" aria-label="save">${STAR_ICON}</button>`].filter(Boolean).join(' · ');
-    const notes = mode === 'saved' ? `<div class="notes"><textarea class="note" data-note="${esc(it.slug)}" rows="2" spellcheck="false" placeholder="notes — e.g. 1:31 really cool bassy track, nice for the outro">${esc(it.note || '')}</textarea><div class="stamps">${stampsHtml(it.note || '')}</div></div>` : '';
+    const notes = mode === 'saved' ? `<div class="notes">
+          <div class="noterow"><button type="button" class="btn ghost mini notebtn" data-notetoggle="${esc(it.slug)}" title="show / hide the notes editor">✎ notes</button><span class="stamps">${stampsHtml(it.note || '')}</span></div>
+          <textarea class="note" data-note="${esc(it.slug)}" rows="2" spellcheck="false" hidden placeholder="notes — e.g. 1:31 really cool bassy track, nice for the outro">${esc(it.note || '')}</textarea>
+        </div>` : '';
     return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(it.id)}" data-key="${esc(it.slug)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${it.art ? `<img class="art" src="${esc(it.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
@@ -236,7 +239,7 @@
     $$('textarea.note', ol).forEach((ta) => {   // reused rows: refresh note text unless it is being edited right now
       const n = notes.get(ta.dataset.note) ?? '';
       if (document.activeElement !== ta && ta.value !== n) { ta.value = n; $('.stamps', ta.parentElement).innerHTML = stampsHtml(n); }
-      autosize(ta);
+      if (!ta.hidden) autosize(ta);
     });
     $('#rinseSavedCount').textContent = items.length || '';
     $('#savedStatus').textContent = items.length ? `${items.length} saved sets · notes sync across devices` : 'Nothing saved yet — use the ★ on a set in the feed.';
@@ -725,6 +728,7 @@
     else if (t.dataset.save) toggleSave(t.dataset.save);
     else if (t.matches('.subtab[data-rtab]')) { state.ui.rinseTab = t.dataset.rtab; save(LS.ui, state.ui); renderRinseTabs(); }
     else if (t.matches('.stamp')) { const a = $('audio', t.closest('.item')); if (a) { a.currentTime = Number(t.dataset.sec); a.play(); } }
+    else if (t.dataset.notetoggle) { const ta = $('textarea.note', t.closest('.notes')); ta.hidden = !ta.hidden; t.classList.toggle('on', !ta.hidden); if (!ta.hidden) { autosize(ta); ta.focus(); } }
     else if (t.dataset.addslug) { toggleShow(t.dataset.addslug, true); $('#showSearch').value = ''; renderShowList(); }
   });
   document.addEventListener('input', (ev) => { if (ev.target.id === 'showSearch') renderShowList(); else if (ev.target.matches('textarea.note')) noteInput(ev.target); });

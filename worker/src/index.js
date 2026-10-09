@@ -173,7 +173,8 @@ async function putSeen(env, body) {
   const doc = await getSeen(env);
   let changed = mergeItems(doc.items, body && body.items);
   const cutoff = Date.now() - KEEP_MS;
-  for (const [id, rec] of Object.entries(doc.items)) if (rec.t < cutoff) { delete doc.items[id]; changed = true; }
+  const keep = new Set(Object.values((await getSaved(env)).items).filter((r) => r.s === 1 && r.ep && r.ep.id).map((r) => r.ep.id));  // saved sets keep their tick forever
+  for (const [id, rec] of Object.entries(doc.items)) if (rec.t < cutoff && !keep.has(id)) { delete doc.items[id]; changed = true; }
   if (changed) { doc.updated = Date.now(); await env.STATE.put(SEEN_KEY, JSON.stringify(doc)); }
   return doc;
 }
