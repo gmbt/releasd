@@ -304,17 +304,23 @@
      not pause its <audio>, so filters/sorting no longer interrupt playback. fresh=true rebuilds every row. */
   const tpl = document.createElement('template');
   function reconcile(ol, items, html, fresh = false) {
+    if (fresh) ol.replaceChildren();
     const existing = new Map($$(':scope > .item', ol).map((li) => [li.dataset.key, li]));
-    const frag = document.createDocumentFragment();
+    let cur = ol.firstElementChild;
     for (const it of items) {
-      let li = fresh ? null : existing.get(it.key);
+      let li = existing.get(it.key);
       if (li) {
+        existing.delete(it.key);
         const on = isSeen(it.id); li.classList.toggle('seen', on);
         const cb = $('.seenbox input', li); if (cb) cb.checked = on;
-      } else { tpl.innerHTML = html(it); li = tpl.content.firstElementChild; }
-      frag.appendChild(li);
+        if (li === cur) { cur = cur.nextElementSibling; continue; }  // already in place: never detach (an <iframe> reloads when moved)
+      } else {
+        tpl.innerHTML = html(it); li = tpl.content.firstElementChild;
+      }
+      ol.insertBefore(li, cur);
     }
-    ol.replaceChildren(frag);
+    // rows no longer in the data: drop them, except one that is still playing (kept at the end until it stops)
+    for (const li of existing.values()) { if (li.classList.contains('playing')) ol.appendChild(li); else li.remove(); }
   }
 
   function renderRinse(fresh = false) {
