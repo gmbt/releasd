@@ -28,6 +28,8 @@ export default {
       }
       if (route === 'GET /seen') return json(await getSeen(env), 200, cors);
       if (route === 'PUT /seen') return json(await putSeen(env, await req.json()), 200, cors);
+      if (route === 'GET /saved') return json(await getSaved(env), 200, cors);
+      if (route === 'PUT /saved') return json(await putSaved(env, await req.json()), 200, cors);
       if (route === 'GET /config') return json(await getConfig(env), 200, cors);
       if (route === 'PUT /config') return json(await putConfig(env, await req.json()), 200, cors);
       return json({ error: 'not found' }, 404, cors);
@@ -185,6 +187,34 @@ async function legacySeen(env) {
   } catch (e) {
     return /GitHub 404/.test(e.message) ? {} : null;
   }
+}
+
+/* ---------- saved sets + notes ----------
+   Same last-write-wins merge as seen marks, but records carry a note and a snapshot of the episode (so a saved set
+   can still be shown after it left the feed window). Never pruned. */
+const SAVED_KEY = 'saved';
+async function getSaved(env) {
+  return (await env.STATE.get(SAVED_KEY, 'json')) || { v: 1, items: {} };
+}
+function mergeSavedItems(into, from) {
+  let changed = false;
+  for (const [id, rec] of Object.entries(from || {})) {
+    if (!rec || typeof rec.t !== 'number' || id.length > 200) continue;
+    const cur = into[id];
+    if (!cur || rec.t > cur.t) {
+      const note = typeof rec.note === 'string' ? rec.note.slice(0, 5000) : (cur && cur.note) || '';
+      let ep = rec.ep && typeof rec.ep === 'object' ? rec.ep : null;
+      if (!ep || JSON.stringify(ep).length > 4000) ep = (cur && cur.ep) || null;
+      into[id] = { t: rec.t, s: rec.s ? 1 : 0, note, ep };
+      changed = true;
+    }
+  }
+  return changed;
+}
+async function putSaved(env, body) {
+  const doc = await getSaved(env);
+  if (mergeSavedItems(doc.items, body && body.items)) { doc.updated = Date.now(); await env.STATE.put(SAVED_KEY, JSON.stringify(doc)); }
+  return doc;
 }
 
 /* ---------- config.json via GitHub ---------- */

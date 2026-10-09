@@ -38,8 +38,14 @@
       </div>
     </div>
     <div class="editor" id="rinseEditor" hidden></div>
+    <nav class="subtabs" aria-label="Rinse sections">
+      <button type="button" class="subtab active" data-rtab="feed">Feed <span id="rinseFeedCount" class="count"></span></button>
+      <button type="button" class="subtab" data-rtab="saved">Saved <span id="rinseSavedCount" class="count plain"></span></button>
+    </nav>
     <p class="status" id="rinseStatus">loading…</p>
+    <p class="status" id="savedStatus" hidden></p>
     <ol class="items" id="rinseItems"></ol>
+    <ol class="items" id="rinseSaved" hidden></ol>
   </section>
 
   <section class="panel" id="bandcamp">

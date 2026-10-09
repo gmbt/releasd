@@ -108,3 +108,19 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 .settings-form .row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
 code { font-size: 12px; background: var(--line); padding: 1px 4px; border-radius: 3px; }
 code.wrap { display: block; margin: 4px 0 6px; padding: 6px 8px; overflow-wrap: anywhere; user-select: all; }
+
+/* saved sets + notes */
+.count.plain { background: var(--line); color: var(--fg); }
+#rinseSaved .item.seen { opacity: 1; }
+body.hide-seen #rinseSaved .item.seen { display: grid; }
+.btn.icon.star.on { color: var(--rb); border-color: var(--rb); }
+.btn.icon.star.on svg { fill: currentColor; }
+.notes { margin-top: 8px; max-width: 560px; }
+textarea.note { display: block; width: 100%; min-height: 44px; resize: none; overflow: hidden; padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--fg); font: inherit; font-size: 13px; line-height: 1.45; }
+textarea.note:focus { border-color: var(--accent); outline: none; }
+.stamps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.stamps:empty { display: none; }
+.stamp { border: 0; border-radius: 12px; padding: 2px 9px; background: var(--line); color: var(--fg); font-size: 12px; cursor: pointer; }
+.stamp:hover { background: #33333a; }
+.stamp b { color: var(--accent); font-weight: 600; margin-right: 5px; font-variant-numeric: tabular-nums; }

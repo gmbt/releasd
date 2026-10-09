@@ -6,7 +6,7 @@
 
   const RINSE_API = 'https://admin.rinse.fm/api';
   const API_URL = 'https://releasd-api.gmbt.workers.dev';  // Cloudflare Worker from worker/
-  const LS = { seen: 'releasd.seen', settings: 'releasd.settings', cfg: 'releasd.cfg', ui: 'releasd.ui', shows: 'releasd.shows' };
+  const LS = { seen: 'releasd.seen', saved: 'releasd.saved', settings: 'releasd.settings', cfg: 'releasd.cfg', ui: 'releasd.ui', shows: 'releasd.shows' };
   const DEFAULT_CFG = { days_back: 30, rinse: { shows: [] }, bandcamp: { fan: '', labels: [], exclude: [] } };
 
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -14,6 +14,7 @@
   const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } };
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const STAR_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z"/></svg>';
   const COPY_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   const nonEmpty = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v));
 
@@ -32,7 +33,8 @@
     cfg: null,
     rinse: [], bc: null,
     seen: migrateSeen(load(LS.seen, {})),
-    ui: Object.assign({ hideSeen: false, showUpcoming: false, tab: 'rinse', bcTab: 'released', rinseSort: 'added', bpm: false }, load(LS.ui, {})),
+    saved: load(LS.saved, {}),
+    ui: Object.assign({ hideSeen: false, showUpcoming: false, tab: 'rinse', bcTab: 'released', rinseSort: 'added', bpm: false, rinseTab: 'feed' }, load(LS.ui, {})),
     settings: Object.assign({ api: API_URL, key: '' }, nonEmpty(load(LS.settings, {})), nonEmpty({ key: keyFromUrl() })),
   };
 
@@ -164,8 +166,9 @@
     return state.rinse.filter((it) => state.ui.showUpcoming || !it.upcoming).sort((a, b) => b[key] - a[key]);
   }
 
-  function rinseItem(it) {
+  function rinseItem(it, mode = 'feed') {
     const seen = isSeen(it.id);
+    const saved = state.saved[it.slug]?.s === 1;
     const badges = [
       it.rebroadcast && '<span class="badge rb">rebroadcast</span>',
       it.backfilled && '<span class="badge bf">backfilled</span>',
@@ -175,7 +178,9 @@
     const meta = [it.backfilled ? `aired ${it.dateStr} ${it.time} · added ${it.addedStr}` : `${it.dateStr} · ${it.time}`, it.channel, it.length ? `${it.length} min` : '',
       `<a href="${esc(it.url)}" target="_blank" rel="noopener">rinse.fm</a>`,
       it.file ? `<a href="${esc(it.file)}" target="_blank" rel="noopener">mp3</a>` : '',
-      `<button type="button" class="btn ghost mini icon" data-copy="${esc(it.url)}" title="copy link to this episode" aria-label="copy link">${COPY_ICON}</button>`].filter(Boolean).join(' · ');
+      `<button type="button" class="btn ghost mini icon" data-copy="${esc(it.url)}" title="copy link to this episode" aria-label="copy link">${COPY_ICON}</button>`,
+      `<button type="button" class="btn ghost mini icon star${saved ? ' on' : ''}" data-save="${esc(it.slug)}" title="${saved ? 'remove from saved' : 'save this set'}" aria-label="save">${STAR_ICON}</button>`].filter(Boolean).join(' · ');
+    const notes = mode === 'saved' ? `<div class="notes"><textarea class="note" data-note="${esc(it.slug)}" rows="2" spellcheck="false" placeholder="notes — e.g. 1:31 really cool bassy track, nice for the outro">${esc(it.note || '')}</textarea><div class="stamps">${stampsHtml(it.note || '')}</div></div>` : '';
     return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(it.id)}" data-key="${esc(it.slug)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${it.art ? `<img class="art" src="${esc(it.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
@@ -184,7 +189,112 @@
         <div class="meta">${meta}</div>
         ${it.extract ? `<div class="extract">${esc(it.extract)}</div>` : ''}
         ${it.file ? `<audio controls preload="none"${bpmOn() ? ` crossorigin="anonymous" src="${esc(relayUrl(it.file))}"` : ` src="${esc(it.file)}"`}></audio>` : ''}
+        ${notes}
       </div></li>`;
+  }
+
+  /* ---------- saved sets + notes ---------- */
+  // "1:31 bassy track" -> clickable chip that seeks the row's player; the text after the timestamp (same line) is its label
+  function stampsHtml(note) {
+    const out = [];
+    for (const line of String(note).split(/\n/)) {
+      const re = /(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?!\d)/g; let m; const found = [];
+      while ((m = re.exec(line))) found.push({ idx: m.index, len: m[0].length, sec: (Number(m[1] || 0) * 3600) + Number(m[2]) * 60 + Number(m[3]), text: m[0] });
+      found.forEach((f, i) => {
+        const end = i + 1 < found.length ? found[i + 1].idx : line.length;
+        const label = line.slice(f.idx + f.len, end).replace(/^[\s\-–:,.]+|[\s\-–:,.]+$/g, '').slice(0, 60);
+        out.push(`<button type="button" class="stamp" data-sec="${f.sec}" title="jump to ${esc(f.text)}"><b>${esc(f.text)}</b>${esc(label)}</button>`);
+      });
+    }
+    return out.join('');
+  }
+  const snapshot = (it) => ({ id: it.id, slug: it.slug, showSlug: it.showSlug, showTitle: it.showTitle, sub: it.sub, dateStr: it.dateStr, time: it.time,
+    length: it.length, file: it.file, channel: it.channel, extract: it.extract, url: it.url, art: it.art, rebroadcast: it.rebroadcast });
+
+  function toggleSave(slug) {
+    const cur = state.saved[slug];
+    if (cur?.s === 1) state.saved[slug] = { ...cur, t: Date.now(), s: 0 };          // tombstone; note kept for a later re-save
+    else {
+      const it = state.rinse.find((x) => x.slug === slug);
+      const ep = it ? snapshot(it) : cur?.ep;
+      if (!ep) return toast('cannot save: episode not loaded');
+      state.saved[slug] = { t: Date.now(), s: 1, note: cur?.note || '', ep };
+      toast('Saved — find it under Rinse › Saved');
+    }
+    save(LS.saved, state.saved); scheduleSavedPush();
+    const on = state.saved[slug].s === 1;
+    $$(`[data-save="${CSS.escape(slug)}"]`).forEach((b) => { b.classList.toggle('on', on); b.title = on ? 'remove from saved' : 'save this set'; });
+    renderSaved();
+  }
+  const savedList = () => Object.values(state.saved).filter((r) => r.s === 1 && r.ep).sort((a, b) => b.t - a.t)
+    .map((r) => ({ ...r.ep, key: r.ep.slug, note: r.note || '', savedT: r.t }));
+  function renderSaved() {
+    const items = savedList();
+    const ol = $('#rinseSaved');
+    reconcile(ol, items, (it) => rinseItem(it, 'saved'));
+    const notes = new Map(items.map((it) => [it.slug, it.note]));
+    $$('textarea.note', ol).forEach((ta) => {   // reused rows: refresh note text unless it is being edited right now
+      const n = notes.get(ta.dataset.note) ?? '';
+      if (document.activeElement !== ta && ta.value !== n) { ta.value = n; $('.stamps', ta.parentElement).innerHTML = stampsHtml(n); }
+      autosize(ta);
+    });
+    $('#rinseSavedCount').textContent = items.length || '';
+    $('#savedStatus').textContent = items.length ? `${items.length} saved sets · notes sync across devices` : 'Nothing saved yet — use the ★ on a set in the feed.';
+    renderRinseTabs();
+  }
+  function renderRinseTabs() {
+    const tab = state.ui.rinseTab || 'feed';
+    $$('.subtab[data-rtab]').forEach((b) => b.classList.toggle('active', b.dataset.rtab === tab));
+    $('#rinseItems').hidden = tab !== 'feed'; $('#rinseStatus').hidden = tab !== 'feed';
+    $('#rinseSaved').hidden = tab !== 'saved'; $('#savedStatus').hidden = tab !== 'saved';
+  }
+  const autosize = (ta) => { ta.style.height = 'auto'; ta.style.height = `${Math.max(44, ta.scrollHeight)}px`; };
+  const noteTimers = new Map();
+  function noteInput(ta) {
+    autosize(ta);
+    const slug = ta.dataset.note;
+    $('.stamps', ta.parentElement).innerHTML = stampsHtml(ta.value);
+    clearTimeout(noteTimers.get(slug));
+    noteTimers.set(slug, setTimeout(() => {
+      const cur = state.saved[slug]; if (!cur) return;
+      if (cur.note === ta.value) return;
+      state.saved[slug] = { ...cur, note: ta.value, t: Date.now() };
+      save(LS.saved, state.saved); scheduleSavedPush();
+    }, 1200));
+  }
+
+  // sync, same shape as seen marks
+  let savedTimer = null, savedPushing = false, savedDirty = false;
+  function mergeSaved(items) {
+    let changed = false;
+    for (const [id, rec] of Object.entries(items || {})) {
+      const cur = state.saved[id];
+      if (!cur || (rec.t || 0) > (cur.t || 0)) { state.saved[id] = rec; changed = true; }
+    }
+    return changed;
+  }
+  async function pullSaved() {
+    if (!apiReady()) return false;
+    try { const changed = mergeSaved((await api('/saved')).items); if (changed) save(LS.saved, state.saved); return changed; }
+    catch (e) { syncErr(e, 'saved sync'); return false; }
+  }
+  function scheduleSavedPush() {
+    if (!apiReady()) return;
+    savedDirty = true; clearTimeout(savedTimer); savedTimer = setTimeout(pushSaved, 1500);
+  }
+  async function pushSaved() {
+    if (!apiReady() || savedPushing) return;
+    savedPushing = true; savedDirty = false;
+    try {
+      const merged = await api('/saved', { method: 'PUT', body: JSON.stringify({ items: state.saved }) });
+      if (mergeSaved(merged.items)) { save(LS.saved, state.saved); renderSaved(); }
+    } catch (e) {
+      syncErr(e, 'saved sync');
+      if (!/API 401/.test(e.message)) savedTimer = setTimeout(() => { savedDirty = true; pushSaved(); }, 15000);
+    } finally {
+      savedPushing = false;
+      if (savedDirty) scheduleSavedPush();
+    }
   }
 
   /* Re-render a list by reusing existing rows (keyed) and only reordering them. Moving a node within one task does
@@ -313,6 +423,7 @@
   function updateCounts() {
     const unseen = (list) => list.filter((i) => !isSeen(i.id)).length || '';
     $('#rinseCount').textContent = unseen(visibleRinse());
+    $('#rinseFeedCount').textContent = $('#rinseCount').textContent;
     $('#bcReleasedCount').textContent = unseen(visibleBc('released'));
     $('#bcPreCount').textContent = unseen(visibleBc('preorders'));
     $('#bcCount').textContent = unseen(allBc());
@@ -374,6 +485,7 @@
   document.addEventListener('visibilitychange', async () => {
     if (document.hidden || !state.cfg) return;
     if (await pullSeen()) applySeenToDom();
+    if (await pullSaved()) renderSaved();
     if (Date.now() - lastFetch > REFETCH_AFTER_HIDDEN) refetchFeeds();
   });
 
@@ -609,9 +721,12 @@
     else if (t.dataset.rm) removeSource(t.dataset.rm, t.dataset.val);
     else if (t.dataset.copy !== undefined) copyText(t.dataset.copy);
     else if (t.id === 'bcRefresh') refreshBandcamp(t);
+    else if (t.dataset.save) toggleSave(t.dataset.save);
+    else if (t.matches('.subtab[data-rtab]')) { state.ui.rinseTab = t.dataset.rtab; save(LS.ui, state.ui); renderRinseTabs(); }
+    else if (t.matches('.stamp')) { const a = $('audio', t.closest('.item')); if (a) { a.currentTime = Number(t.dataset.sec); a.play(); } }
     else if (t.dataset.addslug) { toggleShow(t.dataset.addslug, true); $('#showSearch').value = ''; renderShowList(); }
   });
-  document.addEventListener('input', (ev) => { if (ev.target.id === 'showSearch') renderShowList(); });
+  document.addEventListener('input', (ev) => { if (ev.target.id === 'showSearch') renderShowList(); else if (ev.target.matches('textarea.note')) noteInput(ev.target); });
   document.addEventListener('submit', (ev) => {
     const f = ev.target; if (!f.dataset.add) return;
     ev.preventDefault();
@@ -660,10 +775,11 @@
     const hadLocal = Object.keys(state.seen).length > 0;
     await Promise.allSettled([
       pullSeen(),
+      pullSaved(),
       fetchRinse().then(renderRinse, (e) => { $('#rinseStatus').textContent = 'Rinse API error: ' + e.message; }),
       fetchBandcamp().then(renderBc, (e) => { $('#bcStatus').textContent = 'No Bandcamp data yet — run build.py or wait for the Action. ' + e.message; }),
     ]);
-    renderRinse(); renderBc();
+    renderRinse(); renderBc(); renderSaved();
     lastFetch = Date.now();
     if (hadLocal) scheduleSeenPush();  // upload marks made on this device before/without sync
   }
