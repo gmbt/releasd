@@ -384,7 +384,8 @@
   }
 
   function renderBc() {
-    $$('.subtab').forEach((b) => b.classList.toggle('active', b.dataset.bctab === state.ui.bcTab));
+    if (!['released', 'preorders'].includes(state.ui.bcTab)) state.ui.bcTab = 'released';  // heal a bad stored value
+    $$('.subtab[data-bctab]').forEach((b) => b.classList.toggle('active', b.dataset.bctab === state.ui.bcTab));
     const items = visibleBc();
     for (const tab of ['released', 'preorders']) {
       const ol = $(tab === 'released' ? '#bcReleased' : '#bcPre');
@@ -713,7 +714,7 @@
   document.addEventListener('click', (ev) => {
     const t = ev.target.closest('button'); if (!t) return;
     if (t.matches('.tab')) { state.ui.tab = t.dataset.tab; save(LS.ui, state.ui); renderTabs(); }
-    else if (t.matches('.subtab')) { state.ui.bcTab = t.dataset.bctab; save(LS.ui, state.ui); renderBc(); }
+    else if (t.matches('.subtab[data-bctab]')) { state.ui.bcTab = t.dataset.bctab; save(LS.ui, state.ui); renderBc(); }
     else if (t.matches('.play')) togglePlayer(t.closest('.item'));
     else if (t.dataset.seen) markAllSeen(t.dataset.seen);
     else if (t.dataset.edit) toggleEditor(t.dataset.edit);
