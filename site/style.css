@@ -127,3 +127,12 @@ textarea.note { margin-top: 6px; }
 .stamp { border: 0; border-radius: 12px; padding: 2px 9px; background: var(--line); color: var(--fg); font-size: 12px; cursor: pointer; }
 .stamp:hover { background: #33333a; }
 .stamp b { color: var(--accent); font-weight: 600; margin-right: 5px; font-variant-numeric: tabular-nums; }
+
+/* login */
+.login { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: var(--bg); padding: 16px; }
+.login-card { width: min(360px, 100%); padding: 22px 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: 10px; }
+.login-card h2 { margin: 0 0 4px; font-size: 18px; text-transform: none; letter-spacing: .02em; color: var(--fg); }
+.login-card input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; font-size: 15px; }
+.login-card input:focus { border-color: var(--accent); outline: none; }
+.login-card .btn { padding: 8px 10px; font-size: 14px; }
+body.locked main, body.locked .tools, body.locked .tabs { display: none; }

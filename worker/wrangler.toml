@@ -1,6 +1,8 @@
 # releasd private backend: seen-marks store + GitHub proxy for config edits.
 # Secrets (set with `npx wrangler secret put <NAME>`):
-#   API_KEY   - long random string; the page sends it as Bearer token (from the #k= URL fragment)
+#   LOGIN_PASSWORD - the passphrase typed into the page's login box
+#   SESSION_SECRET - random; signs the session tokens /login hands out (rotate it to log out everywhere)
+#   API_KEY   - long random string accepted as Bearer too (legacy #k= links, scripts)
 #   GH_TOKEN  - fine-grained GitHub PAT on GH_OWNER/GH_REPO: Contents read & write, Actions read & write (for /refresh + cron)
 #   ADMIN_KEY - shared with the GitHub Action (repo secret RELEASD_ADMIN_KEY); lets it upload built Bandcamp data
 name = "releasd-api"

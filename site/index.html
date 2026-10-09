@@ -12,6 +12,15 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="login" class="login" hidden>
+  <form class="login-card" id="loginForm">
+    <h2>releasd <span class="by">by gmbt</span></h2>
+    <p class="hint">Enter the passphrase to open the feed.</p>
+    <input name="password" type="password" autocomplete="current-password" placeholder="passphrase" required>
+    <button class="btn" type="submit">log in</button>
+    <p class="hint warn" id="loginErr"></p>
+  </form>
+</div>
 <header class="top">
   <h1>releasd <span class="by">by gmbt</span></h1>
   <nav class="tabs" aria-label="Sections">
@@ -70,14 +79,12 @@
 
 <dialog id="settings">
   <form method="dialog" class="settings-form">
-    <h2>Sync</h2>
-    <p class="hint">Seen marks and show/label edits sync through your private backend. On a new device, open your
-      personal link once; the key is then remembered in that browser.</p>
-    <label>Your personal link <code id="syncLink" class="wrap">—</code>
-      <button type="button" id="copyLink" class="btn ghost">copy</button></label>
-    <label>Key <input name="key" autocomplete="off" spellcheck="false" placeholder="paste key if you have no link"></label>
+    <h2>Account</h2>
+    <p class="hint" id="sessionInfo"></p>
+    <button type="button" id="logoutBtn" class="btn ghost">log out on this device</button>
     <details><summary class="hint">advanced</summary>
       <label>API URL <input name="api" autocomplete="off" spellcheck="false"></label>
+      <label>Legacy key <input name="key" autocomplete="off" spellcheck="false"></label>
     </details>
     <div class="row">
       <button value="cancel" class="btn ghost">cancel</button>

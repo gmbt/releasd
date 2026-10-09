@@ -11,7 +11,6 @@ import html
 import json
 import os
 import re
-import shutil
 import sys
 import threading
 import time
@@ -21,7 +20,7 @@ from urllib import error, request
 
 ROOT = Path(__file__).resolve().parent
 SITE = ROOT / "site"
-DATA = SITE / "data"
+DATA = ROOT / "out"   # local inspection only; the page reads the dataset from the Worker
 CACHE = ROOT / "cache" / "tralbums.json"   # per-release details; persisted between runs via actions/cache
 FOLLOWS_CACHE = ROOT / "cache" / "follows.json"  # last good follow list; used when Bandcamp blocks the profile page
 BC = "https://bandcamp.com"
@@ -299,7 +298,6 @@ def main() -> int:
         "errors": errors,
     }
     (DATA / "bandcamp.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))
-    shutil.copy(ROOT / "config.json", SITE / "config.json")
     print(f"{len(bands)} bands, {len(out_releases)} releases in last {days}d, {fetched} details fetched, "
           f"{_stats['requests']} requests, {_stats['retries']} retries after 429, {len(errors)} errors")
     for e in errors:

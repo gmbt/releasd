@@ -35,7 +35,7 @@
     seen: migrateSeen(load(LS.seen, {})),
     saved: load(LS.saved, {}),
     ui: Object.assign({ hideSeen: false, showUpcoming: false, tab: 'rinse', bcTab: 'released', rinseSort: 'added', bpm: false, rinseTab: 'feed' }, load(LS.ui, {})),
-    settings: Object.assign({ api: API_URL, key: '' }, nonEmpty(load(LS.settings, {})), nonEmpty({ key: keyFromUrl() })),
+    settings: Object.assign({ api: API_URL, key: '', session: '', sessionExp: 0 }, nonEmpty(load(LS.settings, {})), nonEmpty({ key: keyFromUrl() })),
   };
 
   /* ---------- ui helpers ---------- */
@@ -50,35 +50,61 @@
   const fmtDay = (d, tz) => d.toLocaleDateString('en-GB', { timeZone: tz, day: '2-digit', month: 'short' });
 
   /* ---------- backend: Cloudflare Worker (worker/) ---------- */
-  const apiReady = () => !!(state.settings.api && state.settings.key);
+  const authToken = () => state.settings.session || state.settings.key;
+  const apiReady = () => !!(state.settings.api && authToken());
+  const apiBase = () => (state.settings.api || API_URL).replace(/\/$/, '');
   async function api(path, opts = {}) {
-    const r = await fetch(state.settings.api.replace(/\/$/, '') + path, {
+    const r = await fetch(apiBase() + path, {
       ...opts,
-      headers: { Authorization: `Bearer ${state.settings.key}`, 'Content-Type': 'application/json', ...(opts.headers || {}) },
+      headers: { Authorization: `Bearer ${authToken()}`, 'Content-Type': 'application/json', ...(opts.headers || {}) },
     });
     if (!r.ok) {
       let msg = ''; try { msg = (await r.json()).error || ''; } catch { /* no body */ }
+      if (r.status === 401 && state.settings.session) {  // session expired or secret rotated
+        state.settings = { ...state.settings, session: '', sessionExp: 0 }; save(LS.settings, state.settings);
+        showLogin('Session expired — please log in again.');
+      }
       throw new Error(`API ${r.status}${msg ? ': ' + msg : ''}`);
     }
     return r.json();
   }
+
+  /* ---------- login ---------- */
+  function showLogin(msg = '') {
+    document.body.classList.add('locked');
+    const el = $('#login'); el.hidden = false; $('#loginErr').textContent = msg;
+    setTimeout(() => $('input', el)?.focus(), 50);
+  }
+  function hideLogin() { document.body.classList.remove('locked'); $('#login').hidden = true; }
+  async function doLogin(password) {
+    const r = await fetch(apiBase() + '/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `login failed (${r.status})`);
+    state.settings = { ...state.settings, session: j.token, sessionExp: j.exp };
+    save(LS.settings, state.settings);
+  }
+  function logout() {
+    state.settings = { ...state.settings, session: '', sessionExp: 0, key: '' }; save(LS.settings, state.settings);
+    history.replaceState(null, '', location.pathname);
+    showLogin('Logged out.');
+  }
+  $('#loginForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const f = ev.target, btn = $('button', f); btn.disabled = true; $('#loginErr').textContent = '';
+    try { await doLogin(f.password.value); f.reset(); hideLogin(); await init(); }
+    catch (e) { $('#loginErr').textContent = e.message; }
+    finally { btn.disabled = false; }
+  });
   const syncErr = (e, what) => toast(/API 401/.test(e.message) ? 'Sync key rejected — check settings.' : `${what}: ${e.message}`, 6000);
 
   async function loadConfig() {
     const local = load(LS.cfg, null);
-    if (apiReady()) {
-      try {
-        const { config } = await api('/config');
-        if (!local?._localEdits) save(LS.cfg, config);
-        return config;
-      } catch (e) { console.warn('config via API failed', e); syncErr(e, 'config'); }
-    }
-    if (local?._localEdits) return local;
     try {
-      const r = await fetch(`config.json?t=${Date.now()}`, { cache: 'no-store' });
-      if (r.ok) { const cfg = await r.json(); save(LS.cfg, cfg); return cfg; }
-    } catch { /* offline or local dev without build */ }
-    return local || structuredClone(DEFAULT_CFG);
+      const { config } = await api('/config');
+      if (local?._localEdits) return local;   // edits made while offline: keep them until they are pushed
+      save(LS.cfg, config);
+      return config;
+    } catch (e) { console.warn('config via API failed', e); syncErr(e, 'config'); return local || structuredClone(DEFAULT_CFG); }
   }
 
   async function commitConfig(msg) {
@@ -337,14 +363,10 @@
   }
 
   /* ---------- bandcamp ---------- */
-  async function fetchBandcamp() {
-    if (apiReady()) {  // built data is kept in the Worker (only replaced by successful builds)
-      try { const d = await api('/bandcamp'); if (d?.bands?.length) { state.bc = d; migratePreMarks(); return; } } catch (e) { console.warn('bandcamp via API', e); }
-    }
-    const r = await fetch(`data/bandcamp.json?t=${Date.now()}`, { cache: 'no-store' });
-    if (!r.ok) throw new Error(`data/bandcamp.json → ${r.status}`);
-    state.bc = await r.json();
-    migratePreMarks();
+  async function fetchBandcamp() {  // built data lives in the Worker (only replaced by successful builds)
+    const d = await api('/bandcamp');
+    if (!d?.bands?.length) throw new Error(d?.errors?.[0] || 'no data yet');
+    state.bc = d; migratePreMarks();
   }
 
   // pre-order = release date still ahead, or Bandcamp says so (data can be up to 3 h stale)
@@ -640,23 +662,20 @@
   }
 
   /* ---------- settings ---------- */
-  const syncLink = () => (state.settings.key ? `${location.origin}${location.pathname}#k=${state.settings.key}` : '');
   function openSettings() {
     const dlg = $('#settings'); const f = $('form', dlg);
     f.api.value = state.settings.api || ''; f.key.value = state.settings.key || '';
-    $('#syncLink', dlg).textContent = syncLink() || 'no key yet';
+    $('#sessionInfo', dlg).textContent = state.settings.session
+      ? `Logged in · session valid until ${new Date(state.settings.sessionExp).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+      : state.settings.key ? 'Logged in with a legacy key link' : 'Not logged in';
     dlg.returnValue = ''; dlg.showModal();
   }
   $('#settings').addEventListener('close', async (ev) => {
     const dlg = ev.target; if (dlg.returnValue !== 'save') return;
     const f = $('form', dlg);
-    state.settings = { api: f.api.value.trim() || API_URL, key: f.key.value.trim() };
+    state.settings = { ...state.settings, api: f.api.value.trim() || API_URL, key: f.key.value.trim() };
     save(LS.settings, state.settings);
     await init();
-  });
-  document.addEventListener('click', (ev) => {
-    if (ev.target.id !== 'copyLink' || !syncLink()) return;
-    navigator.clipboard?.writeText(syncLink()).then(() => toast('Sync link copied'), () => toast('Copy failed — select the link manually'));
   });
 
   function copyText(text) {
@@ -731,6 +750,7 @@
     else if (t.dataset.seen) markAllSeen(t.dataset.seen);
     else if (t.dataset.edit) toggleEditor(t.dataset.edit);
     else if (t.id === 'openSettings' || t.hasAttribute('data-settings')) openSettings();
+    else if (t.id === 'logoutBtn') { $('#settings').close('cancel'); logout(); }
     else if (t.dataset.rm) removeSource(t.dataset.rm, t.dataset.val);
     else if (t.dataset.copy !== undefined) copyText(t.dataset.copy);
     else if (t.id === 'bcRefresh') refreshBandcamp(t);
@@ -771,7 +791,9 @@
 
   /* ---------- init ---------- */
   async function init() {
-    if (keyFromUrl()) save(LS.settings, state.settings);  // arrived via the personal sync link: remember the key
+    if (keyFromUrl()) save(LS.settings, state.settings);  // legacy personal link: remember the key
+    if (!apiReady()) { showLogin(); return; }
+    hideLogin();
     const local = load(LS.cfg, null);
     state.cfg = await loadConfig();
     if (apiReady() && local?._localEdits) {
@@ -791,7 +813,7 @@
       pullSeen(),
       pullSaved(),
       fetchRinse().then(renderRinse, (e) => { $('#rinseStatus').textContent = 'Rinse API error: ' + e.message; }),
-      fetchBandcamp().then(renderBc, (e) => { $('#bcStatus').textContent = 'No Bandcamp data yet — run build.py or wait for the Action. ' + e.message; }),
+      fetchBandcamp().then(renderBc, (e) => { $('#bcStatus').textContent = 'Bandcamp data unavailable: ' + e.message; }),
     ]);
     renderRinse(); renderBc(); renderSaved();
     lastFetch = Date.now();

@@ -1,5 +1,4 @@
-site/data/
-site/config.json
+out/
 __pycache__/
 .DS_Store
 cache/

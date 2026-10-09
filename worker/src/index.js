@@ -15,7 +15,8 @@ export default {
     if (url.pathname === '/health') return json({ ok: true }, 200, cors);
     if (url.pathname === '/audio' && req.method === 'GET') return audioRelay(req, url, cors);
     if (url.pathname.startsWith('/admin/')) return admin(req, url, env, cors);
-    if (!authorized(req, env)) return json({ error: 'unauthorized' }, 401, cors);
+    if (url.pathname === '/login' && req.method === 'POST') return login(req, env, cors);
+    if (!(await authorized(req, env))) return json({ error: 'unauthorized' }, 401, cors);
     try {
       const route = `${req.method} ${url.pathname}`;
       if (route === 'GET /bandcamp') return json((await env.STATE.get(BC_KEY, 'json')) || { bands: [], releases: [], errors: ['no data yet'] }, 200, cors);
@@ -109,10 +110,48 @@ function corsHeaders(origin, env) {
 const json = (data, status, headers) =>
   new Response(JSON.stringify(data), { status, headers: { ...headers, 'Content-Type': 'application/json; charset=utf-8' } });
 
-function authorized(req, env) {
-  const h = req.headers.get('Authorization') || '';
-  const key = h.startsWith('Bearer ') ? h.slice(7).trim() : '';
-  return !!env.API_KEY && key.length === env.API_KEY.length && timingSafeEqual(key, env.API_KEY);
+// Bearer = a session token issued by /login, or (legacy / scripts) the API_KEY itself
+async function authorized(req, env) {
+  const key = bearer(req);
+  if (!key) return false;
+  if (env.API_KEY && key.length === env.API_KEY.length && timingSafeEqual(key, env.API_KEY)) return true;
+  return validSession(env, key);
+}
+
+/* ---------- login + sessions ----------
+   POST /login {password} -> {token, exp}. The token is an HMAC-signed, self-contained session (180 days); nothing is
+   stored server-side, so "log out everywhere" = rotate SESSION_SECRET. Failed attempts are rate-limited per IP in KV. */
+const SESSION_MS = 180 * 864e5, LOGIN_MAX = 8, LOGIN_WINDOW_S = 600;
+const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+async function hmac(secret, msg) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return b64u(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(msg)));
+}
+async function issueSession(env) {
+  const exp = Date.now() + SESSION_MS;
+  const payload = `v1.${exp}.${b64u(crypto.getRandomValues(new Uint8Array(12)))}`;
+  return { token: `${payload}.${await hmac(env.SESSION_SECRET, payload)}`, exp };
+}
+async function validSession(env, token) {
+  if (!env.SESSION_SECRET || typeof token !== 'string') return false;
+  const parts = token.split('.');
+  if (parts.length !== 4 || parts[0] !== 'v1' || !(Number(parts[1]) > Date.now())) return false;
+  const expect = await hmac(env.SESSION_SECRET, parts.slice(0, 3).join('.'));
+  return expect.length === parts[3].length && timingSafeEqual(expect, parts[3]);
+}
+async function login(req, env, cors) {
+  if (!env.LOGIN_PASSWORD || !env.SESSION_SECRET) return json({ error: 'login is not set up yet (LOGIN_PASSWORD secret missing)' }, 503, cors);
+  const rlKey = `rl:${req.headers.get('CF-Connecting-IP') || 'unknown'}`;
+  const rl = (await env.STATE.get(rlKey, 'json')) || { n: 0 };
+  if (rl.n >= LOGIN_MAX) return json({ error: 'too many attempts, try again in 10 minutes' }, 429, cors);
+  let password = '';
+  try { password = String((await req.json()).password || ''); } catch { /* no body */ }
+  const ok = password.length === env.LOGIN_PASSWORD.length && timingSafeEqual(password, env.LOGIN_PASSWORD);
+  if (!ok) {
+    await env.STATE.put(rlKey, JSON.stringify({ n: rl.n + 1 }), { expirationTtl: LOGIN_WINDOW_S });
+    return json({ error: 'wrong passphrase' }, 401, cors);
+  }
+  return json(await issueSession(env), 200, cors);
 }
 function timingSafeEqual(a, b) {
   let r = 0;

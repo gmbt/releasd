@@ -19,7 +19,8 @@ Cloudflare Worker (worker/) ── KV: seen marks, config cache, built Bandcamp 
 GitHub Action (build.py, every ~3 h or on demand) ──▶ bandcamp.com mobile API
 ```
 
-- The page is static. Rinse is queried live; Bandcamp data comes from the Worker's store.
+- The page is a static shell behind a passphrase login (sessions are HMAC tokens from the Worker, rate-limited per IP).
+  Rinse is queried live; config, Bandcamp data, seen marks and saved sets all come from the Worker, nothing personal is on Pages.
 - The Action only *uploads* when it produced data, so a blocked or failed run never blanks the page.
 - Show/label edits from the UI are committed to `config.json` through the Worker (the GitHub token lives only there).
 - Seen marks: per item, last-write-wins, merged server-side; a rebroadcast shares the state of its original;
@@ -34,13 +35,15 @@ GitHub Action (build.py, every ~3 h or on demand) ──▶ bandcamp.com mobile 
    cd worker
    npx wrangler login
    npx wrangler kv namespace create STATE        # id -> wrangler.toml
-   npx wrangler secret put API_KEY               # page key, e.g. openssl rand -hex 24
+   npx wrangler secret put LOGIN_PASSWORD        # the passphrase typed into the page's login box
+   npx wrangler secret put SESSION_SECRET        # random, signs sessions (rotate = log out everywhere)
+   npx wrangler secret put API_KEY               # optional: a key accepted as Bearer for scripts / legacy #k= links
    npx wrangler secret put ADMIN_KEY             # shared with the Action
    npx wrangler secret put GH_TOKEN              # fine-grained PAT, this repo only: Contents RW + Actions RW
    npx wrangler deploy
    ```
    Set `API_URL` in `site/app.js` to the printed URL. `gh secret set RELEASD_ADMIN_KEY` with the same admin key.
-3. Open the page once per device via `https://OWNER.github.io/releasd/#k=<API_KEY>` (settings shows the link).
+3. Open `https://OWNER.github.io/releasd/`, log in with the passphrase; the session lasts 180 days per device.
 
 ## config.json
 
