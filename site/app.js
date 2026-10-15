@@ -220,9 +220,9 @@
   }
 
   /* ---------- saved sets + notes ---------- */
-  const notesHtml = (key, note = '') => `<div class="notes">
+  const notesHtml = (key, note = '', ph = 'e.g. 1:31 nice track') => `<div class="notes">
           <div class="noterow"><button type="button" class="btn ghost mini notebtn" data-notetoggle="${esc(key)}" title="show / hide the notes editor">✎ notes</button><span class="stamps">${stampsHtml(note)}</span></div>
-          <textarea class="note" data-note="${esc(key)}" rows="2" spellcheck="false" hidden placeholder="e.g. 1:31 nice track">${esc(note)}</textarea>
+          <textarea class="note" data-note="${esc(key)}" rows="2" spellcheck="false" hidden placeholder="${esc(ph)}">${esc(note)}</textarea>
         </div>`;
   // "1:31 bassy track" -> clickable chip that seeks the row's player; the text after the timestamp (same line) is its label
   function stampsHtml(note) {
@@ -430,7 +430,7 @@
       `<button type="button" class="btn ghost mini icon" data-copy="${esc(r.url || '')}" title="copy link to this release" aria-label="copy link">${COPY_ICON}</button>`,
       `<button type="button" class="btn ghost mini icon star${saved ? ' on' : ''}" data-save="${esc(skey)}" title="${saved ? 'remove from saved' : 'save this release'}" aria-label="save">${STAR_ICON}</button>`,
       (!pre || r.streamable) ? '<button type="button" class="btn play" title="play">▶</button>' : ''].filter(Boolean).join(' · ');
-    const notes = mode === 'saved' ? notesHtml(skey, r.note) : '';
+    const notes = mode === 'saved' ? notesHtml(skey, r.note, 'e.g. track 2 is nice') : '';
     return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(r.id)}" data-item="${esc(r.item_type)}:${esc(r.item_id)}" data-tracks="${r.tracks || 0}" data-key="${esc(r.key || r.id)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${r.art ? `<img class="art" src="${esc(r.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
