@@ -206,10 +206,7 @@
       it.file ? `<a href="${esc(it.file)}" target="_blank" rel="noopener">mp3</a>` : '',
       `<button type="button" class="btn ghost mini icon" data-copy="${esc(it.url)}" title="copy link to this episode" aria-label="copy link">${COPY_ICON}</button>`,
       `<button type="button" class="btn ghost mini icon star${saved ? ' on' : ''}" data-save="${esc(it.slug)}" title="${saved ? 'remove from saved' : 'save this set'}" aria-label="save">${STAR_ICON}</button>`].filter(Boolean).join(' · ');
-    const notes = mode === 'saved' ? `<div class="notes">
-          <div class="noterow"><button type="button" class="btn ghost mini notebtn" data-notetoggle="${esc(it.slug)}" title="show / hide the notes editor">✎ notes</button><span class="stamps">${stampsHtml(it.note || '')}</span></div>
-          <textarea class="note" data-note="${esc(it.slug)}" rows="2" spellcheck="false" hidden placeholder="e.g. 1:31 nice track">${esc(it.note || '')}</textarea>
-        </div>` : '';
+    const notes = mode === 'saved' ? notesHtml(it.slug, it.note) : '';
     return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(it.id)}" data-key="${esc(it.slug)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${it.art ? `<img class="art" src="${esc(it.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
@@ -223,6 +220,10 @@
   }
 
   /* ---------- saved sets + notes ---------- */
+  const notesHtml = (key, note = '') => `<div class="notes">
+          <div class="noterow"><button type="button" class="btn ghost mini notebtn" data-notetoggle="${esc(key)}" title="show / hide the notes editor">✎ notes</button><span class="stamps">${stampsHtml(note)}</span></div>
+          <textarea class="note" data-note="${esc(key)}" rows="2" spellcheck="false" hidden placeholder="e.g. 1:31 nice track">${esc(note)}</textarea>
+        </div>`;
   // "1:31 bassy track" -> clickable chip that seeks the row's player; the text after the timestamp (same line) is its label
   function stampsHtml(note) {
     const out = [];
@@ -246,7 +247,13 @@
   function toggleSave(slug) {
     const cur = state.saved[slug];
     if (cur?.s === 1) state.saved[slug] = { ...cur, t: Date.now(), s: 0 };          // tombstone; note kept for a later re-save
-    else {
+    else if (slug.startsWith('bc:')) {
+      const r = allBc().find((x) => 'bc:' + x.rid === slug);
+      const ep = r ? snapshotBc(r) : cur?.ep;
+      if (!ep) return toast('cannot save: release not loaded');
+      state.saved[slug] = { t: Date.now(), s: 1, note: cur?.note || '', ep };
+      toast('Saved — find it under Bandcamp › Saved');
+    } else {
       const it = state.rinse.find((x) => x.slug === slug);
       const ep = it ? snapshot(it) : cur?.ep;
       if (!ep) return toast('cannot save: episode not loaded');
@@ -255,17 +262,30 @@
     }
     save(LS.saved, state.saved); scheduleSavedPush();
     const on = state.saved[slug].s === 1;
-    $$(`[data-save="${CSS.escape(slug)}"]`).forEach((b) => { b.classList.toggle('on', on); b.title = on ? 'remove from saved' : 'save this set'; });
+    $$(`[data-save="${CSS.escape(slug)}"]`).forEach((b) => { b.classList.toggle('on', on); b.title = on ? 'remove from saved' : 'save this'; });
     renderSaved();
   }
-  const savedList = () => Object.values(state.saved).filter((r) => r.s === 1 && r.ep).sort((a, b) => b.t - a.t)
+  const savedList = () => Object.values(state.saved).filter((r) => r.s === 1 && r.ep && r.ep.kind !== 'bc').sort((a, b) => b.t - a.t)
     .map((r) => ({ ...r.ep, key: r.ep.slug, note: r.note || '', savedT: r.t }));
+  // bandcamp snapshot (kept forever, like rinse); id = released seen-key so the Worker never prunes its tick
+  const snapshotBc = (r) => ({ kind: 'bc', id: r.rid, rid: r.rid, item_id: r.item_id, item_type: r.item_type, title: r.title, artist: r.artist,
+    url: r.url, art: r.art, release_date: r.release_date, label: r.label, tracks: r.tracks, duration: r.duration,
+    via: (r.via || []).map((v) => ({ name: v.name, url: v.url })) });
+  function bcSavedList() {
+    const live = new Map(allBc().map((r) => [r.rid, r]));   // prefer current data (pre-order -> released, track counts)
+    return Object.entries(state.saved).filter(([k, r]) => k.startsWith('bc:') && r.s === 1 && r.ep).sort((a, b) => b[1].t - a[1].t)
+      .map(([k, r]) => { const cur = live.get(r.ep.rid); return { ...r.ep, ...(cur || {}), id: r.ep.rid, rid: r.ep.rid, key: k, note: r.note || '' }; });
+  }
   function renderSaved() {
     const items = savedList();
     const ol = $('#rinseSaved');
     reconcile(ol, items, (it) => rinseItem(it, 'saved'));
-    const notes = new Map(items.map((it) => [it.slug, it.note]));
-    $$('textarea.note', ol).forEach((ta) => {   // reused rows: refresh note text unless it is being edited right now
+    const bcItems = bcSavedList();
+    reconcile($('#bcSaved'), bcItems, (r) => bcItem(r, 'saved'));
+    $('#bcSavedCount').textContent = bcItems.length || '';
+    if (state.ui.bcTab === 'saved') renderBcStatus();
+    const notes = new Map([...items.map((it) => [it.slug, it.note]), ...bcItems.map((r) => [r.key, r.note])]);
+    $$('#rinseSaved textarea.note, #bcSaved textarea.note').forEach((ta) => {   // reused rows: refresh note text unless it is being edited right now
       const n = notes.get(ta.dataset.note) ?? '';
       if (document.activeElement !== ta && ta.value !== n) { ta.value = n; $('.stamps', ta.parentElement).innerHTML = stampsHtml(n); }
       if (!ta.hidden) autosize(ta);
@@ -390,13 +410,15 @@
     if (moved) { save(LS.seen, state.seen); scheduleSeenPush(); }
   }
   function visibleBc(tab = state.ui.bcTab) {
+    if (tab === 'saved') return bcSavedList();
     const items = allBc().filter((r) => isPre(r) === (tab === 'preorders'));
     // released: newest first (build order); pre-orders: soonest out first
     return tab === 'preorders' ? items.sort((a, b) => new Date(a.release_date) - new Date(b.release_date)) : items;
   }
 
-  function bcItem(r) {
+  function bcItem(r, mode = 'feed') {
     const seen = isSeen(r.id);
+    const skey = 'bc:' + (r.rid || r.id), saved = state.saved[skey]?.s === 1;
     const via = (r.via || []).map((v) => `<a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.name)}</a>`).join(', ');
     const label = r.label && !(r.via || []).some((v) => v.name === r.label) ? esc(r.label) : '';
     const pre = isPre(r);
@@ -406,25 +428,37 @@
       : [r.tracks ? `${r.tracks} tr` : '', r.duration ? fmtDur(r.duration) : ''].filter(Boolean).join(' · ');
     const meta = [pre ? `out ${date}` : date, via, label, tracks,
       `<button type="button" class="btn ghost mini icon" data-copy="${esc(r.url || '')}" title="copy link to this release" aria-label="copy link">${COPY_ICON}</button>`,
+      `<button type="button" class="btn ghost mini icon star${saved ? ' on' : ''}" data-save="${esc(skey)}" title="${saved ? 'remove from saved' : 'save this release'}" aria-label="save">${STAR_ICON}</button>`,
       (!pre || r.streamable) ? '<button type="button" class="btn play" title="play">▶</button>' : ''].filter(Boolean).join(' · ');
-    return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(r.id)}" data-item="${esc(r.item_type)}:${esc(r.item_id)}" data-tracks="${r.tracks || 0}" data-key="${esc(r.id)}">
+    const notes = mode === 'saved' ? notesHtml(skey, r.note) : '';
+    return `<li class="item has-art${seen ? ' seen' : ''}" data-id="${esc(r.id)}" data-item="${esc(r.item_type)}:${esc(r.item_id)}" data-tracks="${r.tracks || 0}" data-key="${esc(r.key || r.id)}">
       <label class="seenbox" title="seen"><input type="checkbox"${seen ? ' checked' : ''}></label>
       ${r.art ? `<img class="art" src="${esc(r.art)}" alt="" loading="lazy">` : '<div class="art"></div>'}
       <div class="body">
         <div class="line1"><span class="artist">${esc(r.artist)}</span> — <a href="${esc(r.url || r.via?.[0]?.url || '#')}" target="_blank" rel="noopener">${esc(r.title)}</a>${pre ? '<span class="badge up">pre-order</span>' : ''}${r.item_type === 'track' ? '<span class="badge">single</span>' : ''}</div>
         <div class="meta">${meta}</div>
         <div class="player"></div>
+        ${notes}
       </div></li>`;
   }
 
   function renderBc() {
-    if (!['released', 'preorders'].includes(state.ui.bcTab)) state.ui.bcTab = 'released';  // heal a bad stored value
+    if (!['released', 'preorders', 'saved'].includes(state.ui.bcTab)) state.ui.bcTab = 'released';  // heal a bad stored value
     $$('.subtab[data-bctab]').forEach((b) => b.classList.toggle('active', b.dataset.bctab === state.ui.bcTab));
-    const items = visibleBc();
     for (const tab of ['released', 'preorders']) {
       const ol = $(tab === 'released' ? '#bcReleased' : '#bcPre');
       reconcile(ol, visibleBc(tab).map((r) => Object.assign(r, { key: r.rid })), bcItem);
       ol.hidden = tab !== state.ui.bcTab;
+    }
+    $('#bcSaved').hidden = state.ui.bcTab !== 'saved';
+    renderBcStatus();
+    updateCounts();
+  }
+  function renderBcStatus() {
+    const items = visibleBc();
+    if (state.ui.bcTab === 'saved') {
+      $('#bcStatus').textContent = items.length ? `${items.length} saved releases · notes sync across devices` : 'Nothing saved yet — use the ★ on a release.';
+      return;
     }
     if (state.bc) {
       const age = Math.round((Date.now() - new Date(state.bc.generated_at)) / 36e5);
@@ -433,7 +467,6 @@
       st.textContent = `${items.length} ${state.ui.bcTab === 'preorders' ? 'pre-orders' : 'releases'} · ${state.bc.bands.length} artists/labels · last ${state.bc.days_back} days · built ${age < 1 ? '<1' : age} h ago${errs}`;
       st.title = (state.bc.errors || []).join('\n');
     }
-    updateCounts();
   }
 
   function togglePlayer(li) {

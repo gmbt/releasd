@@ -111,8 +111,8 @@ code.wrap { display: block; margin: 4px 0 6px; padding: 6px 8px; overflow-wrap: 
 
 /* saved sets + notes */
 .count.plain { background: var(--line); color: var(--fg); }
-#rinseSaved .item.seen { opacity: 1; }
-body.hide-seen #rinseSaved .item.seen { display: grid; }
+#rinseSaved .item.seen, #bcSaved .item.seen { opacity: 1; }
+body.hide-seen #rinseSaved .item.seen, body.hide-seen #bcSaved .item.seen { display: grid; }
 .btn.icon.star.on { color: var(--rb); border-color: var(--rb); }
 .btn.icon.star.on svg { fill: currentColor; }
 .notes { margin-top: 8px; max-width: 560px; }
